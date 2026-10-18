@@ -1,0 +1,6 @@
+# 実行すると作られるもの（AWS のリソース ID を含むので Git に入れない）
+.state.json
+.state.json.tmp
+.state.json.corrupt-*
+__pycache__/
+*.pyc

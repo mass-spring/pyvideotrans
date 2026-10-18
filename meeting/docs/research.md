@@ -694,3 +694,21 @@ E4 の実装時の調査（サブエージェント sonnet）。**太字は公�
 - 未確認：本物の 48kHz 日本語録音、Mac／Windows での実行、日本語の ASR 確認、台本を人が読んだときの自然さ。
 
 出典：[webrtcvad-wheels](https://pypi.org/project/webrtcvad-wheels/) / [faster-whisper](https://github.com/SYSTRAN/faster-whisper) / [speechbrain ECAPA](https://huggingface.co/speechbrain/spkrec-ecapa-voxceleb)
+
+---
+
+## 20. AWS EC2 での自動実行（ec2run）（2026-10-18 追記）
+
+`meeting/cloud/aws` を作成（サブエージェント sonnet、opus がレビュー・テスト再実行）。**太字は公式ページ・コードで再確認済み**。
+
+- 操作は AWS の API だけ（SSM Run Command と S3）。SSH は使わない（この開発環境は HTTPS のみ）。
+- **AMI：AWS Deep Learning Base OSS Nvidia Driver GPU AMI（Ubuntu 22.04）。最新の ID は公開 SSM パラメータ `/aws/service/deeplearning/ami/x86_64/base-oss-nvidia-driver-gpu-ubuntu-22.04/latest/ami-id` で取得**（AWS 公式ドキュメント）。
+- **費用の上限：起動時に `shutdown -h +<分>` を予約し、`InstanceInitiatedShutdownBehavior=terminate`（停止＝削除）。IMDSv2 必須**（`meeting/cloud/aws/launch.py`）。最大24時間、二重起動は拒否。
+- 作成・起動・削除は `--yes` がないと実行しない。削除対象は Project と ManagedBy の両タグが付いたものだけ。
+- GPU 枠（vCPU 単位、新しいアカウントは既定0）：L-DB2E81BA＝Running On-Demand G and VT instances、L-3819A6DF＝All G and VT Spot Instance Requests。
+- SSM の出力は標準出力24,000文字・標準エラー8,000文字まで、実行完了まで空 → 実行中のログはインスタンスが S3 に上げ続けたものを読む。
+- 料金（東京・Linux・オンデマンド、AWS Price List 2026-10-15 版）：g4dn.xlarge $0.71/時、g5.xlarge $1.459/時、g6.xlarge $1.167/時、gp3 $0.096/GB-月。
+- 最小権限の IAM ポリシーを `meeting/cloud/aws/iam_user_policy.json` に用意（自分のタグ・名前のリソースだけに限定。SSH の鍵作成や受信の許可は含まない）。
+- 未確認（本物の AWS と GPU が必要）：IAM ポリシーが十分か、DLAMI の中身（Python・SSM エージェント）、自動停止の予約の確認方法、4エンジンの導入と合成、T4 での速度。
+
+出典：[DLAMI Base GPU Ubuntu 22.04](https://docs.aws.amazon.com/dlami/latest/devguide/aws-deep-learning-x86-base-gpu-ami-ubuntu-22-04.html) / [DLAMI の ID の探し方](https://docs.aws.amazon.com/dlami/latest/devguide/find-dlami-id.html) / [EC2 の vCPU 枠](https://docs.aws.amazon.com/ec2/latest/instancetypes/ec2-instance-quotas.html) / [スポットの枠](https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/using-spot-limits.html)

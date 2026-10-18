@@ -1,0 +1,179 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "Ec2ReadOnly",
+      "Effect": "Allow",
+      "Action": [
+        "ec2:DescribeInstances",
+        "ec2:DescribeInstanceTypes",
+        "ec2:DescribeInstanceTypeOfferings",
+        "ec2:DescribeImages",
+        "ec2:DescribeVpcs",
+        "ec2:DescribeSubnets",
+        "ec2:DescribeSecurityGroups",
+        "ec2:DescribeVolumes"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "Ec2RunInstancesNewResourcesMustBeTagged",
+      "Effect": "Allow",
+      "Action": "ec2:RunInstances",
+      "Resource": [
+        "arn:aws:ec2:ap-northeast-1:*:instance/*",
+        "arn:aws:ec2:ap-northeast-1:*:volume/*",
+        "arn:aws:ec2:ap-northeast-1:*:network-interface/*",
+        "arn:aws:ec2:ap-northeast-1:*:spot-instances-request/*"
+      ],
+      "Condition": {"StringEquals": {"aws:RequestTag/Project": "meeting-translator"}}
+    },
+    {
+      "Sid": "Ec2RunInstancesReferencedResources",
+      "Effect": "Allow",
+      "Action": "ec2:RunInstances",
+      "Resource": [
+        "arn:aws:ec2:ap-northeast-1::image/*",
+        "arn:aws:ec2:ap-northeast-1:*:subnet/*",
+        "arn:aws:ec2:ap-northeast-1:*:security-group/*"
+      ]
+    },
+    {
+      "Sid": "Ec2TagOnlyAtCreation",
+      "Effect": "Allow",
+      "Action": "ec2:CreateTags",
+      "Resource": "arn:aws:ec2:ap-northeast-1:*:*/*",
+      "Condition": {"StringEquals": {"ec2:CreateAction": ["RunInstances", "CreateSecurityGroup"]}}
+    },
+    {
+      "Sid": "Ec2TerminateOnlyOurInstances",
+      "Effect": "Allow",
+      "Action": "ec2:TerminateInstances",
+      "Resource": "arn:aws:ec2:ap-northeast-1:*:instance/*",
+      "Condition": {"StringEquals": {"ec2:ResourceTag/Project": "meeting-translator"}}
+    },
+    {
+      "Sid": "Ec2SecurityGroupCreate",
+      "Effect": "Allow",
+      "Action": "ec2:CreateSecurityGroup",
+      "Resource": [
+        "arn:aws:ec2:ap-northeast-1:*:vpc/*",
+        "arn:aws:ec2:ap-northeast-1:*:security-group/*"
+      ]
+    },
+    {
+      "Sid": "Ec2SecurityGroupOnlyOurs",
+      "Effect": "Allow",
+      "Action": ["ec2:RevokeSecurityGroupIngress", "ec2:DeleteSecurityGroup"],
+      "Resource": "arn:aws:ec2:ap-northeast-1:*:security-group/*",
+      "Condition": {"StringEquals": {"ec2:ResourceTag/Project": "meeting-translator"}}
+    },
+    {
+      "Sid": "SsmSendCommandDocument",
+      "Effect": "Allow",
+      "Action": "ssm:SendCommand",
+      "Resource": "arn:aws:ssm:ap-northeast-1::document/AWS-RunShellScript"
+    },
+    {
+      "Sid": "SsmSendCommandOnlyOurInstances",
+      "Effect": "Allow",
+      "Action": "ssm:SendCommand",
+      "Resource": "arn:aws:ec2:ap-northeast-1:*:instance/*",
+      "Condition": {"StringEquals": {"ssm:resourceTag/Project": "meeting-translator"}}
+    },
+    {
+      "Sid": "SsmReadCommands",
+      "Effect": "Allow",
+      "Action": [
+        "ssm:GetCommandInvocation",
+        "ssm:ListCommandInvocations",
+        "ssm:ListCommands",
+        "ssm:CancelCommand",
+        "ssm:DescribeInstanceInformation"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "SsmPublicDlamiParameter",
+      "Effect": "Allow",
+      "Action": "ssm:GetParameter",
+      "Resource": "arn:aws:ssm:ap-northeast-1::parameter/aws/service/deeplearning/ami/*"
+    },
+    {
+      "Sid": "ServiceQuotasReadOnly",
+      "Effect": "Allow",
+      "Action": [
+        "servicequotas:GetServiceQuota",
+        "servicequotas:GetAWSDefaultServiceQuota",
+        "servicequotas:ListRequestedServiceQuotaChangeHistoryByQuota"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "IamRoleAndProfileForThisToolOnly",
+      "Effect": "Allow",
+      "Action": [
+        "iam:CreateRole",
+        "iam:GetRole",
+        "iam:TagRole",
+        "iam:PutRolePolicy",
+        "iam:DeleteRolePolicy",
+        "iam:DeleteRole",
+        "iam:CreateInstanceProfile",
+        "iam:GetInstanceProfile",
+        "iam:TagInstanceProfile",
+        "iam:AddRoleToInstanceProfile",
+        "iam:RemoveRoleFromInstanceProfile",
+        "iam:DeleteInstanceProfile"
+      ],
+      "Resource": [
+        "arn:aws:iam::*:role/meeting-translator-*",
+        "arn:aws:iam::*:instance-profile/meeting-translator-*"
+      ]
+    },
+    {
+      "Sid": "IamAttachOnlyTheSsmManagedPolicy",
+      "Effect": "Allow",
+      "Action": ["iam:AttachRolePolicy", "iam:DetachRolePolicy"],
+      "Resource": "arn:aws:iam::*:role/meeting-translator-*",
+      "Condition": {"ArnEquals": {"iam:PolicyARN": "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"}}
+    },
+    {
+      "Sid": "IamPassRoleToEc2Only",
+      "Effect": "Allow",
+      "Action": "iam:PassRole",
+      "Resource": "arn:aws:iam::*:role/meeting-translator-*",
+      "Condition": {"StringEquals": {"iam:PassedToService": "ec2.amazonaws.com"}}
+    },
+    {
+      "Sid": "IamSpotServiceLinkedRoleFirstUse",
+      "Effect": "Allow",
+      "Action": "iam:CreateServiceLinkedRole",
+      "Resource": "arn:aws:iam::*:role/aws-service-role/spot.amazonaws.com/AWSServiceRoleForEC2Spot",
+      "Condition": {"StringEquals": {"iam:AWSServiceName": "spot.amazonaws.com"}}
+    },
+    {
+      "Sid": "S3BucketsNamedMeetingTranslator",
+      "Effect": "Allow",
+      "Action": [
+        "s3:CreateBucket",
+        "s3:DeleteBucket",
+        "s3:ListBucket",
+        "s3:GetBucketLocation",
+        "s3:ListBucketMultipartUploads",
+        "s3:PutBucketPublicAccessBlock",
+        "s3:PutEncryptionConfiguration",
+        "s3:PutLifecycleConfiguration",
+        "s3:PutBucketTagging",
+        "s3:PutBucketPolicy"
+      ],
+      "Resource": "arn:aws:s3:::meeting-translator-*"
+    },
+    {
+      "Sid": "S3ObjectsInThoseBuckets",
+      "Effect": "Allow",
+      "Action": ["s3:GetObject", "s3:PutObject", "s3:DeleteObject", "s3:AbortMultipartUpload"],
+      "Resource": "arn:aws:s3:::meeting-translator-*/*"
+    }
+  ]
+}
