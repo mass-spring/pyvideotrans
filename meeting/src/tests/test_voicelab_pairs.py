@@ -178,3 +178,16 @@ def test_folder_mode_role_column_overrides(tmp_path):
     cfg = _cfg(tmp_path, [{"name": "C", "folder": str(d)}])
     data = load_speaker(cfg.speakers[0], cfg)
     assert [Path(c.path).name for c in data.profile_refs] == ["u1.wav"] and len(data.eval_clips) == 4
+
+
+def test_max_score_refs_limits_the_number_of_reference_clips_evenly(tmp_path):
+    d = make_profile(tmp_path / "profiles", "A", 0, eval_durs=tuple([3.0] + [4.0] * 11))
+    full = _cfg(tmp_path, [{"name": "A", "profile": str(d)}], max_score_refs=0)
+    lim = _cfg(tmp_path, [{"name": "A", "profile": str(d)}], max_score_refs=4)
+    p_full = plan_speaker(load_speaker(full.speakers[0], full), full)
+    p_lim = plan_speaker(load_speaker(lim.speakers[0], lim), lim)
+    assert len(p_full.score_refs) == 11 and len(p_lim.score_refs) == 4
+    assert [c.path for c in p_lim.score_refs][0] == p_full.score_refs[0].path
+    assert [c.path for c in p_lim.score_refs][-1] == p_full.score_refs[-1].path   # 端を含めて等間隔
+    assert any("max_score_refs" in n for n in p_lim.notes)
+    assert not (p_lim.tts_ref_paths & {c.path for c in p_lim.score_refs})

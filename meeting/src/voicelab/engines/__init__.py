@@ -12,7 +12,7 @@ from __future__ import annotations
 import importlib
 from typing import Any
 
-from .base import Caps, Engine, EngineError, SynthResult  # noqa: F401
+from .base import Caps, Engine, EngineError, SynthResult  # noqa: F401  (SynthResult は再公開)
 
 # 名前 → (モジュール, クラス名)
 _REGISTRY: dict[str, tuple[str, str]] = {

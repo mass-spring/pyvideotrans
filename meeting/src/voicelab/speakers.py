@@ -283,6 +283,12 @@ def plan_speaker(data: SpeakerData, cfg: ExperimentConfig) -> SpeakerPlan:
     lines = pick_line_refs(line_pool, cfg.line_ref_min_s, cfg.line_ref_max_s, cfg.line_refs_per_speaker)
     line_paths = {c.path for c in lines}
     score = [c for c in evals if c.path not in line_paths]
+    if cfg.max_score_refs and len(score) > cfg.max_score_refs:
+        # 多すぎると測定に時間がかかるので、並びの上で等間隔に取り出す（毎回同じ結果になる）
+        step = (len(score) - 1) / (cfg.max_score_refs - 1) if cfg.max_score_refs > 1 else 0
+        keep = sorted({int(round(i * step)) for i in range(cfg.max_score_refs)})
+        notes.append(f"評価用の実声 {len(score)} 本のうち {len(keep)} 本を基準に使います（max_score_refs）")
+        score = [score[i] for i in keep]
     if len(score) == 1:
         notes.append("評価用の実声が 1 本だけです。SIM が不安定になるので、2 本以上（目安 4 本以上）にすると安心です")
     ceiling = score[: cfg.ceiling_max_clips] if (cfg.real_ceiling and len(score) >= 2) else []

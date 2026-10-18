@@ -601,3 +601,39 @@ E4 の実装時の調査（サブエージェント sonnet）。**太字は公�
 - 注意：正解の書き起こしを特定のエンジンで下書きすると、そのエンジンに有利になる
 
 出典：[faster-whisper](https://github.com/SYSTRAN/faster-whisper) / [transformers Cohere ASR](https://github.com/huggingface/transformers/blob/main/docs/source/en/model_doc/cohere_asr.md) / [Qwen3-ASR](https://github.com/QwenLM/Qwen3-ASR) / [parakeet-tdt_ctc-0.6b-ja](https://huggingface.co/nvidia/parakeet-tdt_ctc-0.6b-ja) / [SenseVoice](https://github.com/FunAudioLLM/SenseVoice) / [pyannote community-1](https://huggingface.co/pyannote/speaker-diarization-community-1) / [FLEURS](https://huggingface.co/datasets/google/fleurs)
+
+---
+
+## 17. 比較実験の手順（voicelab）で分かったこと（2026-10-18 追記）
+
+`meeting/src/voicelab` と `meeting/notebooks/voice_baseline_colab.ipynb` を作成（サブエージェント sonnet、opus がレビュー）。
+
+### 17.1 実験の条件（1回に1つだけ変える）
+| 条件 | 中身 | 目的 |
+|---|---|---|
+| C0 line_ref_16k | 2〜4秒の実発話を16kHzにして手本にする | 改造前の pyVideoTrans の再現（現状値） |
+| C1 profile_ref | 登録手本（10〜15秒・元の音質・書き起こし付き） | 手本の差し替えの効果 |
+| C2 stretch ×1.3 / ×2.0 | C1 の出力を早回し | 長さ合わせの影響 |
+| C3 emotion（similarity / refonly / instruct） | VoxCPM2 で「書き起こし付き」「手本のみ」「手本のみ＋感情指示」 | D13 の判断材料。書き起こしの有無と指示の有無を切り分け |
+
+- 評価に使う本人の実声には、TTS の手本を**絶対に混ぜない**（混ざると停止する仕組み）。
+- 本人の実声どうしの類似度（上限の目安）も同時に出す。
+
+### 17.2 公式 API の確認結果
+| エンジン | 呼び方 | 注意 |
+|---|---|---|
+| VoxCPM2（voxcpm 2.0.3） | `VoxCPM.from_pretrained` → `generate(text, prompt_wav_path, prompt_text, reference_wav_path, ...)`、48kHz | PyPI 版には `seed` 引数がない（GitHub 版にはある） |
+| Qwen3-TTS（qwen-tts 0.1.1） | `create_voice_clone_prompt` → `generate_voice_clone(text, language="Japanese" 等)` | 言語は英語名。T4 では flash-attn 不可 → sdpa |
+| CosyVoice3 | `git clone --recursive`（pip パッケージなし）。`inference_zero_shot / cross_lingual / instruct2` | 手本は30秒以内。日本語はカタカナ化が推奨（公式例の注記）。導入が一番壊れやすい |
+| Chatterbox（0.1.7） | `ChatterboxMultilingualTTS.from_pretrained` → `generate(text, language_id, audio_prompt_path, exaggeration, cfg_weight)` | README の `t3_model="v3"` は 0.1.7 にない |
+
+### 17.3 重要：エンジンどうしの依存関係がぶつかる（PyPI で確認）
+- **chatterbox-tts 0.1.7：torch==2.6.0、transformers==5.2.0 を固定**
+- **qwen-tts 0.1.1：transformers==4.57.3 を固定**
+- CosyVoice：torch==2.3.1、numpy==1.26.4 を固定（requirements.txt）
+- → 同じ環境には入らない。**エンジンごとに別の環境を作り、別々に実行する**設計にした（GPU メモリも毎回解放される）。pyVideoTrans 本体に組み込むときも同じ問題が出る（pyVideoTrans は TTS を別プロセス・外部サーバーで動かす方式なので相性は良い）。
+
+### 17.4 未確認（GPU が必要）
+4エンジンの実際の合成、T4 での速度・メモリ、CosyVoice3 の Colab での導入、日本語のカタカナ化の効果、ECAPA での実際の類似度の値。
+
+出典：[VoxCPM](https://github.com/OpenBMB/VoxCPM) / [VoxCPM2](https://huggingface.co/openbmb/VoxCPM2) / [Qwen3-TTS](https://github.com/QwenLM/Qwen3-TTS) / [CosyVoice](https://github.com/FunAudioLLM/CosyVoice) / [Chatterbox](https://github.com/resemble-ai/chatterbox) / [chatterbox-tts（PyPI）](https://pypi.org/project/chatterbox-tts/0.1.7/) / [qwen-tts（PyPI）](https://pypi.org/project/qwen-tts/0.1.1/) / [voxcpm（PyPI）](https://pypi.org/project/voxcpm/2.0.3/)

@@ -176,7 +176,7 @@
 **ステップ**
 - [x] **V0 手法調査**：声の分解（音声符号化・WORLD・分解型ニューラル符号化）、声質変換（VC）、本人ごとの追加学習、類似度の測り方（research.md 12章、設計案 `docs/design.md`）
 - [x] **V1 声の分析カルテを作る**（`meeting/src/voicecheck`、research.md 15章）：本人の登録音声と合成音声を並べて、声の高さ・響き・声質・話者埋め込みの類似度を Excel で比較する仕組み（＝測定器）
-- [ ] **V2 現状値の測定**（準備中：Colab 用の実験手順 `meeting/src/voicelab` と `meeting/notebooks` を作成中）：未改造の pyVideoTrans（ゼロショット複製）で類似度を測り、上の仮説ごとに原因を切り分ける
+- [ ] **V2 現状値の測定**（準備完了：`meeting/notebooks/voice_baseline_colab.ipynb`。登録録音と Colab（GPU）での実行待ち）：未改造の pyVideoTrans（ゼロショット複製）で類似度を測り、上の仮説ごとに原因を切り分ける
 - [ ] **V3 改善策の比較**（①手本の差し替えは実装済み：`clone_ref_mode`・`voice_profile_dir`・44.1kHz）：①手本音声の選別・クリーニング、②本人ごとの追加学習、③合成後の声質変換（VC）、④長さ合わせ方法の変更、を1つずつ試して効果を測る
 - [ ] **V4 抑揚・感情の移植**：E4 と合わせて、元の発言の抑揚・感情を合成音声に移す
 - [ ] **V5 採用構成の決定と組み込み**
@@ -285,6 +285,7 @@
 | 2026-10-18 | fork に保存（commit 6c4439a）。V2 の準備をサブエージェント（sonnet）2体で並列開始 | ①登録ツール `voiceprofile`（約3分の朗読から手本3〜4本を自動で選び profile.json を作る、朗読用の原稿も作成）、②Colab 用の実験手順 `voicelab`（条件を1つずつ変えて類似度を測る） |
 | 2026-10-18 | 優先1の準備をサブエージェント（sonnet）で開始 | 文字起こし・話者分離の評価ツール `asrcheck`（CER・DER・話者正解率・cpCER を Excel に）、pyVideoTrans の CLI で話者分離を有効にする改造 |
 | 2026-10-18 | 文字起こし評価ツール asrcheck と CLI 話者分離の改造が完了（opus がレビュー） | CER・cpCER・DER・話者正解率を日本語の正規化つきで Excel に。テスト136件＋CLI 37件合格、pyVideoTrans の既存テストに新規の失敗なし。faster-whisper small（CPU）は疑似会議で CER 36%（小型では不足）。research.md 10章の CLI の記述を訂正、16章を追加 |
+| 2026-10-18 | Colab 用の比較実験 voicelab が完成（opus がレビュー、依存関係の衝突は PyPI で再確認） | 条件 C0〜C3 を1つずつ変えて合成→声の分析カルテで採点→Excel。4エンジンは依存関係がぶつかるため別環境で実行。テスト102件合格（1件は rubberband なしでスキップ）。実際の合成は GPU が必要で未実施。research.md 17章 |
 
 ## 10. 変更履歴
 

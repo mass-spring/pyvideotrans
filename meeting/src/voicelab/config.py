@@ -69,6 +69,7 @@ class ExperimentConfig:
     folder_ref_count: int = 3                           # wav フォルダ方式：手本に回す本数
     real_ceiling: bool = True                           # 実声どうしの SIM（上限の目安）も出す
     ceiling_max_clips: int = 6
+    max_score_refs: int = 8                             # 評価の基準にする実声の最大本数（多いと測定が遅い）。0 なら全部
     max_texts_per_lang: int | None = None               # お試し用：言語ごとの文の数を減らす
     embedder: str = "ecapa"                             # voicecheck の埋め込み（ecapa / resemblyzer / all / none）
     calib: str = ""                                     # voicecheck calibrate の Excel（合格ライン）
@@ -159,6 +160,7 @@ def config_from_dict(data: dict[str, Any], base_dir: str | Path = ".") -> Experi
         cfg.line_refs_per_speaker = int(cfg.line_refs_per_speaker)
         cfg.folder_ref_count = int(cfg.folder_ref_count)
         cfg.ceiling_max_clips = int(cfg.ceiling_max_clips)
+        cfg.max_score_refs = int(cfg.max_score_refs)
         for k in ("line_ref_min_s", "line_ref_max_s", "profile_ref_min_s", "profile_ref_max_s"):
             setattr(cfg, k, float(getattr(cfg, k)))
         if cfg.max_texts_per_lang is not None:

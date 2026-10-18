@@ -24,7 +24,8 @@
   → emotion の文字列から該当する語を探して、公式の固定文に置き換える。見つからなければエラー（勝手な指示文は作らない）。
 - 日本語は example.py の注記「for Japanese usage, you must translate it to katakana」に従い、pykakasi があればカタカナに直す
   （助詞 は→ワ・へ→エ・を→オ の簡易処理。変換の質は未検証）。無ければそのまま渡して注意を残す。
-- 手本は 30 秒未満（CosyVoice の制約。この実験の手本は 2〜15 秒なので問題なし）。
+- 手本は 30 秒以内（cosyvoice/cli/frontend.py の `_extract_speech_token` に assert がある。この実験の手本は 2〜15 秒なので問題なし）。
+  frontend.py は `import whisper`（openai-whisper）と `onnxruntime` を import するので、requirements.txt から除いてはいけない。
 未確認（GPU が無く動かしていない）: Colab での requirements の解決（onnxruntime-gpu・deepspeed・tensorrt などは推論に不要なので
   ノートブックでは除いてある）、T4 でのメモリ・速度、日本語カタカナ化の効果、言語またぎでの zero_shot と cross_lingual の差。
 """

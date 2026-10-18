@@ -15,12 +15,12 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 
-from .audio import duration_of, read_wav, resample, time_stretch, trim_to, write_wav
+from .audio import read_wav, resample, time_stretch, trim_to, write_wav
 from .conditions import Job, RefInfo, build_jobs, safe_name
 from .config import ExperimentConfig, engine_options_for, resolve_path
-from .engines import create_engine, engine_caps, parse_engine_spec
+from .engines import create_engine, parse_engine_spec
 from .engines.base import EngineError, free_gpu
-from .speakers import Clip, SpeakerError, SpeakerPlan, load_speaker, plan_speaker
+from .speakers import Clip, SpeakerPlan, load_speaker, plan_speaker
 from .texts import TargetText, read_targets
 
 MANIFEST = "manifest.csv"
