@@ -1,0 +1,65 @@
+[project]
+name = "voicecheck"
+version = "0.1.0"
+description = "声の分析カルテ: 合成音声が本人にどれだけ似ているかと、声の特徴量を測って Excel に出す測定器"
+readme = "src/voicecheck/README.md"
+requires-python = ">=3.10,<3.13"
+license = "GPL-3.0-or-later"   # praat-parselmouth (GPL-3.0) を使うため
+dependencies = [
+    "numpy>=1.24",
+    "scipy>=1.10",
+    "soundfile>=0.12",
+    "librosa>=0.10",
+    "pyworld>=0.3.4",            # F0 抽出 (harvest)。入れられない時は --no-install-package pyworld でも動く (librosa.pyin に自動で切替)
+    "setuptools>=65,<81",        # pyworld 0.3.5 が pkg_resources を import するため (setuptools 81 以降は pkg_resources が無い)
+    "praat-parselmouth>=0.4.3",  # CPPS (声質の明瞭さ)
+    "openpyxl>=3.1",
+    "pandas>=2.0",
+]
+
+[project.scripts]
+voicecheck = "voicecheck.cli:main"
+
+# 話者埋め込み (声が似ているかの数値化)。`uv sync` で既定で入る。
+# 入れたくない時: uv sync --no-group embedders  (特徴量の計測だけは動く)
+[dependency-groups]
+dev = [
+    "pytest>=8",
+]
+embedders = [
+    "torch>=2.1",
+    "torchaudio>=2.1",
+    "speechbrain>=1.0",          # ECAPA-TDNN (speechbrain/spkrec-ecapa-voxceleb, Apache-2.0)
+    "resemblyzer>=0.1.4",        # Resemblyzer (Apache-2.0)
+    "webrtcvad-wheels>=2.0.10",  # resemblyzer が必要とする webrtcvad のコンパイル不要版 (Windows でも入る)
+]
+
+[tool.uv]
+default-groups = ["dev", "embedders"]
+# resemblyzer が要求する webrtcvad (Windows でコンパイルが必要) を外し、上の webrtcvad-wheels で置き換える
+override-dependencies = ["webrtcvad; sys_platform == 'never'"]
+
+# Linux では CPU 専用の軽い torch を使う (Mac / Windows は PyPI の通常版が CPU 版)
+[tool.uv.sources]
+torch = [{ index = "pytorch-cpu", marker = "sys_platform == 'linux'" }]
+torchaudio = [{ index = "pytorch-cpu", marker = "sys_platform == 'linux'" }]
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/voicecheck"]
+
+[tool.pytest.ini_options]
+testpaths = ["src/tests"]
+addopts = "-ra"
+filterwarnings = [
+    "ignore::DeprecationWarning",
+    "ignore::UserWarning",
+]

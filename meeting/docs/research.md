@@ -541,3 +541,29 @@ E4 の実装時の調査（サブエージェント sonnet）。**太字は公�
 - **pyVideoTrans 本家の不具合（未修正）**：VoxCPM の版の設定名が保存側 `voxcpm_version`、読み込み側 `voxcpmtts_version` で食い違い、常に v2 になる（コード上の確認のみ）。
 
 出典：[VoxCPM2（HF）](https://huggingface.co/openbmb/VoxCPM2) / [VoxCPM（GitHub, app.py）](https://github.com/OpenBMB/VoxCPM/blob/main/app.py) / [VoxCPM cookbook](https://voxcpm.readthedocs.io/en/latest/cookbook.html) / [VoxCPM デモ](https://huggingface.co/spaces/openbmb/VoxCPM-Demo) / [CosyVoice（webui.py・common.py・frontend.py・runtime/python/fastapi/server.py）](https://github.com/FunAudioLLM/CosyVoice) / [Chatterbox](https://github.com/resemble-ai/chatterbox)
+
+---
+
+## 15. 声の分析カルテ（voicecheck）の実測（2026-10-18 追記）
+
+`meeting/src/voicecheck` を作成（サブエージェント sonnet、opus がレビュー・再実行）。
+
+### 15.1 公開音声での較正（LibriSpeech test-clean の40人・335発話、重複を除外）
+| 埋め込み | 同じ人の平均 | 別の人の平均 | EER | おすすめしきい値（EER点） | 厳しめ（別人の通過1%） |
+|---|---|---|---|---|---|
+| ECAPA（speechbrain） | 0.692 | 0.085 | 1.13% | 0.323 | 0.329 |
+| Resemblyzer | 0.850 | 0.548 | 4.32% | 0.691 | 0.742 |
+
+- ECAPA は文献の「本人の実声どうし約0.7」と一致。
+- **Resemblyzer は別人どうしでも平均0.55と高い** → 「0.5未満は別人」という経験則は当てはまらない。**しきい値は測定器ごとに違うので、必ず自分たちの登録データで較正する**。
+- LibriSpeech の同じ人のペアは同じ録音セッション由来なので、EER はやや楽観的。
+- 実音声48行の比較テスト：別の発話は100%合格、別人は0%、声を4半音上げたものは0%、1.3倍速は ECAPA 100%・Resemblyzer 33%（→ Resemblyzer は速度変化に弱い）。
+- opus の再実行（4人×3発話）：ECAPA 同じ人 0.752／別の人 0.162、EER 0%、しきい値 0.507。少人数で分布が完全に分かれると「厳しめ」が「おすすめ」を下回る不具合を発見・修正（厳しめは EER 点以上にする）。
+
+### 15.2 環境まわりの注意
+- pyworld 0.3.5 は `pkg_resources` を使うため、setuptools 81 以降では読み込みに失敗し、黙って librosa.pyin に切り替わっていた → `setuptools<81` に固定。使った方式は Excel の「実行情報」に出る。
+- pyworld の配布済みパッケージ（wheel）は Windows 用のみ。Mac・Linux はビルドが必要（Mac は `xcode-select --install`）。入らない場合は `uv sync --no-install-package pyworld` で pyin に代える。
+- ECAPA のモデルは初回だけダウンロード（約85MB）、以後はオフラインで動く。
+- 未確認：Mac・Windows での実行、Excel 本体での表示、日本語・仏語・中国語での話速の近似、言語をまたぐ類似度。
+
+出典：[speechbrain ECAPA](https://huggingface.co/speechbrain/spkrec-ecapa-voxceleb) / [Resemblyzer](https://github.com/resemble-ai/Resemblyzer) / [LibriSpeech 話者照合データ（HF）](https://huggingface.co/datasets/DynamicSuperb/SpeakerVerification_LibriSpeech-TestClean) / [pyworld](https://github.com/JeremyCCHsu/Python-Wrapper-for-World-Vocoder)
