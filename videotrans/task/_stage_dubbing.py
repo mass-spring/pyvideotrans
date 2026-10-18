@@ -9,7 +9,7 @@ from videotrans.configure.config import tr, app_cfg, settings, logger
 from videotrans.configure.excepts import DubbingSrtError
 from videotrans.tts import run as run_tts, SUPPORT_CLONE
 from videotrans.util.help_misc import get_md5, vail_file
-from videotrans.util import voice_profile
+from videotrans.util import voice_profile, emotion_tts
 from videotrans.util.help_srt import get_subtitle_from_srt, delete_punc
 
 
@@ -59,6 +59,8 @@ class DubbingMixin:
         # clone reference from speaker profiles (None = upstream: each line's own audio); speaker.json is in subtitle line order
         vprofiles = voice_profile.load_for_dubbing(settings)
         speakers = voice_profile.read_speaker_labels(f'{self.cfg.cache_folder}/speaker.json') if vprofiles else []
+        # per-line emotion for the TTS (None = upstream: no emotion); matched by the SOURCE line start time, never by line number
+        emo_index = emotion_tts.load_index(settings, self.cfg.cache_folder, self.cfg.target_dir)
         for i, it in enumerate(subs):
             if it['end_time'] < it['start_time'] or not it['text'].strip():
                 continue
@@ -73,6 +75,12 @@ class DubbingMixin:
                 # add the chosen reference to the cache key, so dubbing made with another reference is not reused
                 _key = get_md5(f"{_key}-{ref.cache_key()}")
 
+            start_source = source_subs[i]['start_time'] if source_subs and i < len(source_subs) else it['start_time']
+            emo = emotion_tts.find_line_emotion(emo_index, start_source)
+            if emo and emotion_tts.engine_uses_emotion(self.cfg.tts_type):
+                # emotion changes the audio of VoxCPM / ChatterBox only: other engines keep their cache keys
+                _key = get_md5(f"{_key}-{emotion_tts.cache_suffix(emo)}")
+
             tmp_dict = {
                 "text": it['text'],
                 "line": it['line'],
@@ -81,8 +89,7 @@ class DubbingMixin:
                 "startraw": it['startraw'],
                 "endraw": it['endraw'],
                 "ref_text": source_subs[i]['text'] if source_subs and i < len(source_subs) else '',
-                "start_time_source": source_subs[i]['start_time'] if source_subs and i < len(source_subs) else it[
-                    'start_time'],
+                "start_time_source": start_source,
                 "end_time_source": source_subs[i]['end_time'] if source_subs and i < len(source_subs) else it[
                     'end_time'],
                 "role": voice,
@@ -92,6 +99,7 @@ class DubbingMixin:
                 "tts_type": self.cfg.tts_type,
                 "filename": f"{self.cfg.cache_folder}/{i}-{_key}.wav"
             }
+            tmp_dict.update(emo)  # emotion, emotion_intensity, emotion_confidence (nothing for "no emotion")
             _dubbing_cache=f'{DUBBING_CACHE}/{_key}.wav'
             if vail_file(_dubbing_cache):
                 # 直接使用缓存
@@ -106,6 +114,8 @@ class DubbingMixin:
 
         if vprofiles:
             logger.debug(f'clone refs from speaker profiles: {len([d for d in queue_tts if d.get("ref_profile")])}/{len([d for d in queue_tts if d.get("ref_wav")])} lines')
+        if emo_index is not None:
+            logger.debug(f'emotion for TTS: {len([d for d in queue_tts if d.get("emotion")])}/{len(queue_tts)} lines (tts_type={self.cfg.tts_type}, engine uses it: {emotion_tts.engine_uses_emotion(self.cfg.tts_type)})')
         self.queue_tts = copy.deepcopy(queue_tts)
 
         if not self.queue_tts or len(self.queue_tts) < 1:

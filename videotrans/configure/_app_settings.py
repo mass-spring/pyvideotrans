@@ -216,6 +216,14 @@ class AppSettings:
             "clone_ref_mode": "",
             # sampling rate (Hz) of clone references cut per line from the source audio (upstream: 16000)
             "clone_ref_sample_rate": 44100,
+            # --- emotion in TTS (docs/meeting_emotion_tts_ja.md); only while enable_emotion is on ---
+            # emotion_tts: apply each line's emotion to the voice (VoxCPM2 control instruction / ChatterBox exaggeration); False = ignore emotion in TTS
+            "emotion_tts": True,
+            # chatterbox_crosslingual_cfg0: ChatterBox uses cfg_weight=0 when the clone reference language differs from the target language
+            "chatterbox_crosslingual_cfg0": True,
+            # voxcpm_emotion_priority: "emotion" = send the emotion instruction (the line is cloned without its transcript),
+            # "similarity" = keep transcript-guided cloning and send no instruction (VoxCPM ignores instructions in that mode)
+            "voxcpm_emotion_priority": "emotion",
             "proxy": ""
          }
         _d.update(self._models_dict())

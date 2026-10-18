@@ -9,6 +9,7 @@ from videotrans.configure.config import params, logger, app_cfg, ROOT_DIR, setti
 from videotrans.configure.excepts import DubbingSrtError
 from videotrans.configure.constants import SPACY_URL_MS,SPACY_URL_HF
 from videotrans.tts._base import BaseTTS
+from videotrans.util.emotion_tts import chatterbox_params, is_enabled as emotion_tts_enabled
 from videotrans.util.help_role import get_chatterbox_role
 from videotrans.util.gpus import mps_or_cpu
 import soundfile as sf
@@ -45,6 +46,9 @@ class ChatterBoxTTS(BaseTTS):
         cfg_weight = float(params.get("chatterbox_cfg_weight", '0.5'))
         exaggeration = float(params.get("chatterbox_exaggeration", '0.5'))
         lang = self.language.split('-')[0]
+        # emotion mode only (enable_emotion + emotion_tts): per-line exaggeration, and cfg_weight=0 when the clone reference language
+        # differs from the target (ChatterBox README: avoids the accent of the reference). Off = the global values above, as upstream
+        cfg0 = emotion_tts_enabled(settings) and bool(settings.get('chatterbox_crosslingual_cfg0', True))
         queue_tts=self.queue_tts
         # 循环，用于轮询重新配音数据，非重新配音时，第一轮直接返回
         while 1:
@@ -70,7 +74,8 @@ class ChatterBoxTTS(BaseTTS):
                     logger.warn('无参考音频，使用内置音色')
                 try:
                     self.signal(text=f'{tr("Dubbing")} {i}/{self.len}')
-                    wav_tensor = model.generate(item['text'], exaggeration=exaggeration, cfg_weight=cfg_weight,
+                    line_exaggeration, line_cfg_weight = chatterbox_params(item, exaggeration, cfg_weight, lang, cfg0, has_ref=bool(ref_wav))
+                    wav_tensor = model.generate(item['text'], exaggeration=line_exaggeration, cfg_weight=line_cfg_weight,
                                                 language_id=lang, audio_prompt_path=ref_wav)
                     wav_tensor = wav_tensor.detach().cpu()
                     if wav_tensor.ndim == 2:

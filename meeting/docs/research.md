@@ -528,3 +528,16 @@ AMI(IHM) 17.0% / AMI(SDM) 19.9% / AISHELL-4 11.7% / AliMeeting 20.3% / VoxConver
 - [ElevenLabs IVC](https://elevenlabs.io/docs/creative-platform/voices/voice-cloning/instant-voice-cloning) / [ElevenLabs PVC](https://elevenlabs.io/docs/creative-platform/voices/voice-cloning/professional-voice-cloning)
 - [Azure Personal Voice](https://learn.microsoft.com/azure/ai-services/speech-service/personal-voice-overview) / [同意の作成](https://learn.microsoft.com/azure/ai-services/speech-service/personal-voice-create-consent) / [Apple Personal Voice（9to5Mac）](https://9to5mac.com/2026/03/19/ios-26-made-one-of-iphones-wildest-most-unique-features-a-lot-better/) / [Resemble](https://docs.app.resemble.ai/docs/resource_voice/create)
 - [Mega-TTS 2](https://arxiv.org/html/2307.07218v4) / [kNN-VC](https://arxiv.org/pdf/2305.18975) / [Voicebox](https://arxiv.org/pdf/2306.15687) / [手本の長さ・ノイズ除去の影響](https://arxiv.org/html/2602.05770v1) / [IWSLT 2026 言語またぎ比較](https://aclanthology.org/2026.iwslt-1.12.pdf) / [JSUT](https://arxiv.org/pdf/1711.00354) / [ATR503](https://research.nii.ac.jp/src/en/ATR503.html)
+
+---
+
+## 14. 感情を TTS に渡す実装で分かったこと（2026-10-18 追記）
+
+E4 の実装時の調査（サブエージェント sonnet）。**太字は公式コードで再確認済み**。
+
+- **VoxCPM2**：指示はテキスト先頭の丸かっこ（例 `(slightly faster, cheerful tone)本文`）。Gradio アプリ（`app.py`）には別の `control_instruction` 欄があり、アプリ側で組み立てる。**書き起こし付きの複製（use_prompt_text＝Ultimate Cloning）のときは指示が捨てられる**（`app.py`：`actual_control = "" if use_prompt_text else control_instruction`）。→ 感情の指示を使う行は書き起こしなしの複製になり、**声の似かたが下がる可能性**がある。設定 `voxcpm_emotion_priority`（"emotion"／"similarity"）で切り替え、声の分析カルテで比べて決める。結果は実行ごとにぶれる（公式）。
+- **CosyVoice3**：公式 webui には複製＋指示を同時に使う instruct2 のモードがない（4モード：预训练音色／3s极速复刻／跨语种复刻／自然语言控制）。「自然语言控制」は手本音声を無視し、初代 CosyVoice 専用。公式の感情指示は「开心・伤心・生气」の3種のみ（中国語の固定文、強さの段階なし）。公式 FastAPI の `/inference_instruct2` は引数の形が現行版と合わない見込み (要検証)。→ instruct2 を呼ぶ小さな API を別に立てる案（pyVideoTrans 側は `docs/meeting_emotion_tts_ja.md` 6章に骨格）。instruct2 は手本の音声トークンを捨てるので、声の似かたが下がる可能性。
+- **ChatterBox**：感情の種類は指定できず、強さ（exaggeration）のみ。手本と出力の言語が違うときは cfg_weight=0（公式 README：手本のなまりの移りを防ぐ）。
+- **pyVideoTrans 本家の不具合（未修正）**：VoxCPM の版の設定名が保存側 `voxcpm_version`、読み込み側 `voxcpmtts_version` で食い違い、常に v2 になる（コード上の確認のみ）。
+
+出典：[VoxCPM2（HF）](https://huggingface.co/openbmb/VoxCPM2) / [VoxCPM（GitHub, app.py）](https://github.com/OpenBMB/VoxCPM/blob/main/app.py) / [VoxCPM cookbook](https://voxcpm.readthedocs.io/en/latest/cookbook.html) / [VoxCPM デモ](https://huggingface.co/spaces/openbmb/VoxCPM-Demo) / [CosyVoice（webui.py・common.py・frontend.py・runtime/python/fastapi/server.py）](https://github.com/FunAudioLLM/CosyVoice) / [Chatterbox](https://github.com/resemble-ai/chatterbox)
