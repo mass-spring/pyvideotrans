@@ -107,6 +107,15 @@ TEXT_DB: Dict[str, Dict[str, str]] = {
     "help_remove_noise":   {"zh": "启用降噪", "en": "Enable noise reduction"},
     "help_enable_diariz":  {"zh": "启用说话人识别", "en": "Enable speaker diarization"},
     "help_nums_diariz":    {"zh": "指定说话人数量", "en": "Number of speakers"},
+    "help_num_speakers": {
+        "zh": "说话人总数N (自动启用说话人识别; 0=不限制, 1=只有一人无需识别). 注意 --nums_diariz 是界面下拉框序号 (0=不限制, n=n+1人)",
+        "en": "Total number of speakers N (also enables diarization; 0=no limit, 1=single speaker, nothing to separate). "
+              "Unlike --nums_diariz, which is the GUI combo index (0=no limit, n=n+1 speakers)"
+    },
+    "help_speaker_type": {
+        "zh": "说话人分离模型, 仅本次运行有效, 不写入 cfg.json (默认使用软件设置中的值)",
+        "en": "Diarization model for this run only, not saved to cfg.json (default: the value in the settings)"
+    },
     "help_rephrase":       {"zh": "重新断句 (0=默认, 1=LLM断句)", "en": "Rephrase (0=default, 1=LLM)"},
     "help_fix_punc":       {"zh": "恢复标点符号", "en": "Restore punctuation"},
 
@@ -158,6 +167,30 @@ TEXT_DB: Dict[str, Dict[str, str]] = {
     },
     "miss_source_lang": {"zh": "--source_language_code", "en": "--source_language_code"},
     "miss_target_lang": {"zh": "--target_language_code", "en": "--target_language_code"},
+    "err_num_speakers_neg": {
+        "zh": "--num-speakers 不能为负数",
+        "en": "--num-speakers must be 0 or greater"
+    },
+    "err_num_speakers_conflict": {
+        "zh": "--num-speakers 与 --nums_diariz 不能同时使用",
+        "en": "Use either --num-speakers or --nums_diariz, not both"
+    },
+    "err_diariz_hf_token": {
+        "zh": "说话人分离模型 {} 需要 huggingface.co 的 token: 请在软件 高级选项 的 hf_token 中填写, 或写入 models/hf_token.txt",
+        "en": "Diarization model {} needs a huggingface.co token: set hf_token in Advanced Settings, or put it in models/hf_token.txt"
+    },
+    "warn_num_speakers_one": {
+        "zh": "[提示] --num-speakers 1: 只有一位说话人, 跳过说话人识别",
+        "en": "[Note] --num-speakers 1: single speaker, diarization skipped"
+    },
+    "warn_speaker_type_ignored": {
+        "zh": "[提示] --speaker-type 仅在启用说话人识别时有效 (--diarize)",
+        "en": "[Note] --speaker-type has no effect without --diarize"
+    },
+    "warn_vtv_diariz_needs_dubbing": {
+        "zh": "[提示] vtv 仅在配音 (--voice_role) 时才会识别说话人; 只需要文字和说话人请用 --task stt",
+        "en": "[Note] In vtv, diarization runs only when dubbing (--voice_role) is set; use --task stt if you only need text and speakers"
+    },
 
     # --- List output ---
     "list_providers_header": {
@@ -262,6 +295,9 @@ def vtv_fun(params: dict) -> None:
     print(tr('process_file', params.get('name')))
     try:
         trk = TransCreate(cfg=TaskCfgVTT(**params))
+        # Single-file run: let --diarize take effect. TransCreate skips diarization unless do_diarize is True
+        # (the GUI sets it for single videos only). With enable_diariz False (the default) nothing changes.
+        trk.do_diarize = True
         trk.prepare()
         trk.recogn()
         trk.diariz()
@@ -315,6 +351,10 @@ def list_models() -> None:
         print(f"  {name:25s}  {repo}")
 
 
+# Same choices as the GUI's "speaker_type" setting (videotrans/ui/advset_keys.py)
+SPEAKER_TYPES = ['built', 'ali_CAM', 'pyannote']
+
+
 # ---------------------------------------------------------------------------
 # Argument parser construction
 # ---------------------------------------------------------------------------
@@ -349,8 +389,12 @@ def build_parser() -> argparse.ArgumentParser:
     stt_group.add_argument('--model_name', type=str, default='tiny', help=tr("help_model_name", 'tiny, base, small, medium, large-v3'))
     stt_group.add_argument('--cuda', action='store_true', help=tr("help_cuda"))
     stt_group.add_argument('--remove_noise', action='store_true', help=tr("help_remove_noise"))
-    stt_group.add_argument('--enable_diariz', action='store_true', help=tr("help_enable_diariz"))
+    stt_group.add_argument('--enable_diariz', '--diarize', dest='enable_diariz', action='store_true',
+                           help=tr("help_enable_diariz"))
     stt_group.add_argument('--nums_diariz', type=int, default=0, help=tr("help_nums_diariz"))
+    stt_group.add_argument('--num-speakers', type=int, default=None, metavar='N', help=tr("help_num_speakers"))
+    stt_group.add_argument('--speaker-type', type=str, default=None, choices=SPEAKER_TYPES,
+                           help=tr("help_speaker_type"))
     stt_group.add_argument('--rephrase', type=int, default=0, help=tr("help_rephrase"))
     stt_group.add_argument('--fix_punc', action='store_true', help=tr("help_fix_punc"))
 
@@ -407,6 +451,42 @@ def validate_task_params(args: argparse.Namespace, parser: argparse.ArgumentPars
             missing.append(tr("miss_target_lang"))
         if missing:
             parser.error(tr("err_vtv_missing", ', '.join(missing)))
+
+
+def resolve_diariz_args(args: argparse.Namespace, parser: argparse.ArgumentParser,
+                        hf_token: str = '', default_speaker_type: str = 'built') -> None:
+    """Resolve the diarization options (--diarize / --num-speakers / --speaker-type) in place.
+
+    --num-speakers N is the real number of speakers; it is converted to the GUI-style
+    nums_diariz (index: 0 = no limit, n = n+1 speakers) that the task classes use.
+    With none of the new options given, args is left untouched (upstream behaviour).
+    Only stt and vtv use diarization.
+    """
+    if args.task not in ('stt', 'vtv'):
+        return
+    n = getattr(args, 'num_speakers', None)
+    if n is not None:
+        if n < 0:
+            parser.error(tr("err_num_speakers_neg"))
+        if args.nums_diariz:
+            parser.error(tr("err_num_speakers_conflict"))
+        if n == 1:
+            print(tr("warn_num_speakers_one"), file=sys.stderr)
+            args.enable_diariz = False
+        else:
+            args.enable_diariz = True
+            args.nums_diariz = max(n - 1, 0)
+
+    speaker_type = getattr(args, 'speaker_type', None)
+    if speaker_type and not args.enable_diariz:
+        print(tr("warn_speaker_type_ignored"), file=sys.stderr)
+    if not args.enable_diariz:
+        return
+    if (speaker_type or default_speaker_type) in ('pyannote', 'reverb') and not hf_token:
+        # Upstream only logs an error and silently skips diarization; a headless run should fail loudly.
+        parser.error(tr("err_diariz_hf_token", speaker_type or default_speaker_type))
+    if args.task == 'vtv' and not args.voice_role:
+        print(tr("warn_vtv_diariz_needs_dubbing"), file=sys.stderr)
 
 
 # ---------------------------------------------------------------------------
@@ -523,7 +603,7 @@ def main() -> int:
     # Parse language from system before anything else
     from videotrans.configure import config
     config.init_run()
-    from videotrans.configure.config import defaulelang, app_cfg
+    from videotrans.configure.config import defaulelang, app_cfg, settings
 
     # Set language for CLI output
     set_lang(defaulelang if defaulelang in ('zh', 'en') else 'en')
@@ -551,6 +631,7 @@ def main() -> int:
 
     # Validate parameters
     validate_task_params(args, parser)
+    resolve_diariz_args(args, parser, settings.get('hf_token', ''), settings.get('speaker_type', 'built'))
 
     # Set runtime flags
     app_cfg.exit_soft = False
@@ -571,6 +652,11 @@ def main() -> int:
         'vtv': lambda: vtv_fun({**common_params, **build_vtv_params(args)}),
     }
 
+    # --speaker-type applies to this run only (in memory, never written to cfg.json)
+    prev_speaker_type = settings.get('speaker_type', 'built')
+    if args.speaker_type:
+        settings['speaker_type'] = args.speaker_type
+
     try:
         task_map[args.task]()
         print(tr('output_dir', common_params.get('target_dir', '')))
@@ -583,6 +669,8 @@ def main() -> int:
     except Exception as e:
         print(tr('failed', str(e)), file=sys.stderr)
         return 1
+    finally:
+        settings['speaker_type'] = prev_speaker_type
 
 
 if __name__ == "__main__":

@@ -312,7 +312,8 @@ AMI(IHM) 17.0% / AMI(SDM) 19.9% / AISHELL-4 11.7% / AliMeeting 20.3% / VoxConver
 対象：`vendor/pyvideotrans`（v4.16、commit f9f35d1、2026-10-15）。サブエージェント（sonnet）が読み取り専用で調査し、**太字はコードで直接確認済み**。
 
 ### 10.1 処理の流れ
-- 入口：GUI `sp.py`、CLI `cli.py`（`--task vtv` で全工程を画面なしで実行可。ただし **CLI では話者分離が動かない**）、Web UI `webui.py`
+- 入口：GUI `sp.py`、CLI `cli.py`（`--task vtv` で全工程を画面なしで実行可）、Web UI `webui.py`
+  - 【2026-10-18 訂正】CLI には元々 `--enable_diariz` / `--nums_diariz` があり、`--task stt` では話者分離が動く。動かないのは `--task vtv` だけ（`TransCreate.do_diarize` が GUI の単一動画でしか True にならない）。→ fork で修正済み（`--diarize`・`--num-speakers N`・`--speaker-type` を追加）
 - タスク本体：`videotrans/task/trans_create.py:TransCreate`（各工程は `task/_stage_*.py` の Mixin）
 - 工程：準備 → 文字起こし → 話者分離（GUIの単一動画のみ）→ 翻訳 → 配音（TTS）→ 長さ合わせ → 合成
 - 工程間のデータ受け渡しは**ディスク上のSRTファイル**（本文と時刻しか保存されない）。追加情報は**別ファイル（例：`speaker.json`、行番号を揃えたJSON）**で持つ方式
@@ -567,3 +568,36 @@ E4 の実装時の調査（サブエージェント sonnet）。**太字は公�
 - 未確認：Mac・Windows での実行、Excel 本体での表示、日本語・仏語・中国語での話速の近似、言語をまたぐ類似度。
 
 出典：[speechbrain ECAPA](https://huggingface.co/speechbrain/spkrec-ecapa-voxceleb) / [Resemblyzer](https://github.com/resemble-ai/Resemblyzer) / [LibriSpeech 話者照合データ（HF）](https://huggingface.co/datasets/DynamicSuperb/SpeakerVerification_LibriSpeech-TestClean) / [pyworld](https://github.com/JeremyCCHsu/Python-Wrapper-for-World-Vocoder)
+
+---
+
+## 16. 文字起こし・話者分離の評価ツール（asrcheck）（2026-10-18 追記）
+
+`meeting/src/asrcheck` を作成（サブエージェント sonnet、opus がレビュー・テスト再実行）。
+
+### 16.1 指標の定義
+- **CER**：正解と認識結果を時刻順につないだ1本の文字列どうしで計算（話者は区別しない）
+- **cpCER**：話者ごとにつないだ文字列で計算し、話者の対応はハンガリー法で最適化（「誰が・何を」を同時に評価）
+- **DER**：NIST 方式（重なり発話も数える）。**collar は前後それぞれの秒数**（pyannote.metrics の collar=0.5 ＝ 本ツールの 0.25）。KPI 判定の既定は collar 0
+- **話者正解率（発言単位）**：発言ごとに重なりが最も長い認識側の話者で判定
+- **日本語の正規化**（正解・認識の両方に同じ処理）：NFKC、句読点・記号・空白の除去、長音記号の統一、数字の統一（既定は算用数字。「二千二十五」「3万5千」「3,000」等をそろえる）。「正規化なし」の CER も併記
+
+### 16.2 公式 API の確認（詳細は `asrcheck/runners.py` 冒頭）
+| エンジン | 確認内容 | 状態 |
+|---|---|---|
+| faster-whisper | `hotwords=`、`vad_filter` | **実機で動作確認** |
+| Cohere Transcribe | `CohereAsrForConditionalGeneration` ＋ `language="ja"`（transformers≥5.4.0）。タイムスタンプ・話者分離・語句ヒントなし | モデルカードは要ログインで未読 (要検証) |
+| Qwen3-ASR | `qwen-asr` の `transcribe(audio, context=, language="Japanese")` | context の推奨書式は公式になし (要検証) |
+| Parakeet-ja | NeMo `ASRModel.from_pretrained` / `transcribe`。**ライセンス CC-BY-4.0** | Mac での動作は記載なし (要検証) |
+| SenseVoiceSmall | funasr `AutoModel` / `generate(language="ja", use_itn=True)` | オフライン運用は (要検証) |
+| pyannote community-1 | `Pipeline.from_pretrained(..., token=)`、`num_speakers`、`exclusive_speaker_diarization` | ソースで確認。pyVideoTrans 内蔵の pyannote は 3.1（community-1 ではない） |
+
+### 16.3 CPU での試行（faster-whisper、日本語の読み上げ文から作った約59秒・2人・6発言の疑似会議、FLEURS CC-BY-4.0）
+| モデル | 処理時間 | RTF | CER |
+|---|---|---|---|
+| small | 22.9秒（モデル読込13秒込み） | 0.39 | 36.2%（6発言中2つを取りこぼし） |
+| base | 19.5秒 | 0.33 | 47.9% |
+- 小さいモデルでは精度が足りない。本番の比較は large-v3 級・Cohere・Qwen3-ASR・Parakeet で行う
+- 注意：正解の書き起こしを特定のエンジンで下書きすると、そのエンジンに有利になる
+
+出典：[faster-whisper](https://github.com/SYSTRAN/faster-whisper) / [transformers Cohere ASR](https://github.com/huggingface/transformers/blob/main/docs/source/en/model_doc/cohere_asr.md) / [Qwen3-ASR](https://github.com/QwenLM/Qwen3-ASR) / [parakeet-tdt_ctc-0.6b-ja](https://huggingface.co/nvidia/parakeet-tdt_ctc-0.6b-ja) / [SenseVoice](https://github.com/FunAudioLLM/SenseVoice) / [pyannote community-1](https://huggingface.co/pyannote/speaker-diarization-community-1) / [FLEURS](https://huggingface.co/datasets/google/fleurs)
