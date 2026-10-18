@@ -38,7 +38,7 @@ from .clips import (
     score_candidate,
     select_refs,
 )
-from .quality import FrameInfo, build_frame_info, clipping_ratio, measure_quality, peak_dbfs
+from .quality import FrameInfo, build_frame_info, clipping_ratio, measure_quality, noise_drift_db, peak_dbfs
 from .script import Script, Slot, ScriptError
 from .segment import NoSpeechError, Segment, Segmentation, detect_segments
 from .text_utils import join_texts, norm_lang
@@ -170,6 +170,10 @@ def build_profile(
         for r in seg.rejected:
             warnings.append(f"{path.name}: {r.seg.start:.1f}〜{r.seg.end:.1f} 秒を除外しました ({r.reason})")
         fd = FileData(k, path, y, sr, y16, len(y) / float(sr), _out_subtype(path), seg, build_frame_info(seg))
+        drift = noise_drift_db(fd.info)
+        if drift > 8.0:
+            warnings.append(f"{path.name}: 雑音の大きさが録音の途中で約 {drift:.0f} dB 変わっています（扇風機・エアコン・自動音量調整など）。"
+                            "発話区間の判定や SNR がずれることがあります。雑音が一定の状態で録り直すのがおすすめです")
         for pos, s in enumerate(seg.segments):
             a = Atom(len(atoms), k, pos, s)
             atoms.append(a)
@@ -177,6 +181,9 @@ def build_profile(
         files.append(fd)
         log(f"    発話区間 {len(seg.segments)} 個 / 雑音の床 {seg.noise_db:.0f} dBFS / 話し声 {seg.speech_db:.0f} dBFS "
             f"/ 判定: {seg.vad_used}")
+    if opts.script is None and opts.skip_first is None:
+        warnings.append("台本なしで録音の最初に同意文が入っている場合は、--skip-first N（同意文の区間数。台本どおりなら 3）で除いてください"
+                        "（付けないと同意文も手本の候補になります）")
     total_speech = sum(a.seg.dur for a in atoms)
     if total_speech < MIN_TOTAL_SPEECH_SEC:
         warnings.append(f"話している時間が合計 {total_speech:.0f} 秒と短いです（目安: 60 秒以上、台本どおりなら約 90 秒）。"

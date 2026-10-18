@@ -15,7 +15,7 @@ from dataclasses import dataclass, field
 import numpy as np
 
 from .script import Slot
-from .text_utils import join_texts, text_similarity
+from .text_utils import containment, join_texts, text_similarity
 
 STATUS_COUNT_OK = "count_ok"      # 区間数と文数が一致し、順番どおりに対応づけた
 STATUS_ESTIMATED = "estimated"    # 長さから推定した (数が合わないため)
@@ -49,9 +49,11 @@ PEN_BLOCK = {(1, 1): 0.0, (2, 1): 0.45, (3, 1): 1.0, (1, 2): 0.55, (1, 3): 1.2}
 COST_SKIP_ATOM = 1.4
 COST_SKIP_SLOT = 1.2
 DURATION_SHARPNESS = 8.0  # 長さの比の対数の 2 乗にかける重み (比 1.13 のずれで費用約 0.12、比 1.7 で約 2.2)
-GAP_OK_SEC = 0.8          # 1 つの文の途中の間として自然な長さ。これより長い間で分かれた区間を 1 文にまとめるときは費用を足す
-GAP_WEIGHT = 2.0          # 上の超過 1 秒あたりの費用 (言い直し・咳の区間を文の一部にしないため)
-ASR_WEIGHT = 2.5          # ASR の似かた (1 - sim) にかける重み
+GAP_OK_SEC = 0.7          # 1 つの文の途中の間として自然な長さ。これより長い間で分かれた区間を 1 文にまとめるときは費用を足す
+GAP_WEIGHT = 4.0          # 上の超過 1 秒あたりの費用 (言い直し・咳の区間を文の一部にしないため)
+ASR_WEIGHT = 4.0          # ASR の似かた (1 - sim) にかける重み
+ASR_SPLIT_WEIGHT = 4.0    # 複数の区間を 1 文にまとめる時、文に含まれない区間があるときの重み
+ASR_SPLIT_MIN_CONTAINMENT = 0.7
 ASR_DURATION_WEIGHT = 0.25
 ORDER_MAX_LN_RATIO = math.log(2.2)   # 数が一致した時、長さの比がこれを超える対応は「要確認」
 DP_MAX_LN_RATIO = math.log(1.7)
@@ -101,9 +103,13 @@ def _dp(durs, files, gaps, slots, asr_texts, scale):
         if asr_texts is None:
             return DURATION_SHARPNESS * ln_r * ln_r, None, ln_r  # 2 乗: 小さなずれは軽く、大きなずれは重く
         lang = slots[j].lang
-        sim = text_similarity(join_texts([asr_texts[x] for x in range(i, i + k)], lang),
-                              join_texts([slots[x].text for x in range(j, j + l)], lang), lang)
-        return ASR_WEIGHT * (1.0 - sim) + ASR_DURATION_WEIGHT * abs(ln_r), sim, ln_r
+        whole = join_texts([slots[x].text for x in range(j, j + l)], lang)
+        sim = text_similarity(join_texts([asr_texts[x] for x in range(i, i + k)], lang), whole, lang)
+        cost = ASR_WEIGHT * (1.0 - sim) + ASR_DURATION_WEIGHT * abs(ln_r)
+        if k > 1:  # 複数の区間を 1 文にまとめるなら、どの区間も文の一部になっているはず (言い直し・独り言を文にくっつけない)
+            cont = min(containment(asr_texts[x], whole, lang) for x in range(i, i + k))
+            cost += ASR_SPLIT_WEIGHT * max(0.0, ASR_SPLIT_MIN_CONTAINMENT - cont)
+        return cost, sim, ln_r
 
     inf = float("inf")
     dp = np.full((n + 1, m + 1), inf)

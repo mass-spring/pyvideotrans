@@ -21,7 +21,10 @@ class SynthRec:
     voiced_power: list[float] = field(default_factory=list)  # 区間ごとの音の出ている部分の平均パワー
 
     def true_snr_db(self, k: int) -> float:
-        return float(10 * np.log10(self.voiced_power[k] / self.noise_amps[k] ** 2))
+        """正解の SNR (dB)。ツールは 16 kHz に落としてから測る (0〜8 kHz) ので、白色雑音のパワーもその帯域ぶんだけ数える。
+        合成音声の成分は 4 kHz 以下なので、音のパワーはそのまま。"""
+        band = min(1.0, 8000.0 / (self.sr / 2.0))
+        return float(10 * np.log10(self.voiced_power[k] / (self.noise_amps[k] ** 2 * band)))
 
     @property
     def duration(self) -> float:

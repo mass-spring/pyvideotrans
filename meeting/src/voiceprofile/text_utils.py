@@ -116,3 +116,12 @@ def text_similarity(a: str, b: str, lang: str) -> float:
     if not na or not nb:
         return 0.0
     return difflib.SequenceMatcher(None, na, nb, autojunk=False).ratio()
+
+
+def containment(part: str, whole: str, lang: str) -> float:
+    """part の文字のうち、whole の中に (順番どおりに) 見つかる割合。part が whole の一部なら 1 に近い。"""
+    npart, nwhole = normalize_for_match(part, lang), normalize_for_match(whole, lang)
+    if not npart:
+        return 1.0
+    sm = difflib.SequenceMatcher(None, npart, nwhole, autojunk=False)
+    return sum(m.size for m in sm.get_matching_blocks()) / len(npart)

@@ -15,8 +15,8 @@ from scipy import ndimage
 
 from .segment import FRAME_SEC, Segment, Segmentation
 
-GUARD_SEC = 0.06          # 発話区間の前後これだけは「雑音」として数えない (音の余韻・息の立ち上がり)
-MIN_NOISE_FRAMES = 15     # クリップ内の雑音フレームがこれ未満なら録音全体の値で代用 (0.15 秒)
+GUARD_SEC = 0.05          # 発話区間の前後これだけは「雑音」として数えない (音の余韻・息の立ち上がり)
+MIN_NOISE_FRAMES = 10     # クリップ内の雑音フレームがこれ未満なら録音全体の値で代用 (0.1 秒)
 SNR_MIN_DB, SNR_MAX_DB = -20.0, 60.0
 SILENT_NOISE_DBFS = -85.0  # 雑音がこれより小さい = 完全な無音に近い (ノイズ除去・ノイズゲートの疑い)
 CLIP_LEVEL = 0.999
@@ -58,6 +58,21 @@ def build_frame_info(seg: Segmentation) -> FrameInfo:
     else:  # ほとんど間がない録音: 下位 5% のパワーで代用
         noise = float(np.percentile(power, 5))
     return FrameInfo(power, db, times, near, seg.off_db, max(noise, 1e-12))
+
+
+def noise_drift_db(info: FrameInfo, n_parts: int = 3, min_frames: int = 30) -> float:
+    """録音を n_parts に分けて、話していない所の雑音の大きさ (中央値) の最大-最小 (dB)。
+
+    扇風機が途中で止まる・マイクの自動音量調整が効く、などで雑音が途中で変わると、発話区間の判定と SNR がずれる。
+    判定できる部分が 2 つ未満なら 0。"""
+    n = len(info.power)
+    levels = []
+    for k in range(n_parts):
+        sl = slice(k * n // n_parts, (k + 1) * n // n_parts)
+        quiet = info.power[sl][~info.near_speech[sl]]
+        if len(quiet) >= min_frames:
+            levels.append(10.0 * np.log10(max(float(np.median(quiet)), 1e-12)))
+    return float(max(levels) - min(levels)) if len(levels) >= 2 else 0.0
 
 
 def _in_ranges(times: np.ndarray, ranges: list[tuple[float, float]]) -> np.ndarray:
