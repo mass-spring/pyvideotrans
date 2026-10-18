@@ -637,3 +637,44 @@ E4 の実装時の調査（サブエージェント sonnet）。**太字は公�
 4エンジンの実際の合成、T4 での速度・メモリ、CosyVoice3 の Colab での導入、日本語のカタカナ化の効果、ECAPA での実際の類似度の値。
 
 出典：[VoxCPM](https://github.com/OpenBMB/VoxCPM) / [VoxCPM2](https://huggingface.co/openbmb/VoxCPM2) / [Qwen3-TTS](https://github.com/QwenLM/Qwen3-TTS) / [CosyVoice](https://github.com/FunAudioLLM/CosyVoice) / [Chatterbox](https://github.com/resemble-ai/chatterbox) / [chatterbox-tts（PyPI）](https://pypi.org/project/chatterbox-tts/0.1.7/) / [qwen-tts（PyPI）](https://pypi.org/project/qwen-tts/0.1.1/) / [voxcpm（PyPI）](https://pypi.org/project/voxcpm/2.0.3/)
+
+---
+
+## 18. 本番PCでの動作可否（Mac M5 24GB と Windows CPU 16GB）（2026-10-18 追記）
+
+サブエージェント（sonnet）の調査。**太字は自分でもコード・公式ページで再確認済み**。[実測]＝出典に数値あり、[推定]＝見積り。
+
+### 18.1 部品ごとの可否
+| 部品 | Mac M5 24GB | Windows x64 CPU 16GB | メモ |
+|---|---|---|---|
+| Whisper large-v3/turbo | ○ mlx-whisper | △ faster-whisper int8 | Mac の MLX は CPU 版より約7倍速 [実測] |
+| Cohere Transcribe | ○（MLX 版ありとの報告。**mlx-audio の公式一覧には載っていない** (要検証)） | △ コミュニティの ONNX int8 | M1 Max で10分の会議を32秒 [実測] |
+| Qwen3-ASR-1.7B | ○ **mlx-audio 対応** | × CPU の実測なし | M5 Pro で RTF 0.027（ベンダー値） |
+| Parakeet-ja | △ 日本語版の MLX なし | △ NeMo | 速度は不明 |
+| SenseVoiceSmall | ○ funasr／sherpa-onnx（**mlx-audio の一覧にはない**） | ○ sherpa-onnx int8 | RTF 約0.1 [実測]。感情タグが取れる |
+| 話者分離 pyannote | ○ MPS（1時間を約2.5分、M4 Pro）[実測] | △ CPU（1時間を30〜40分） | |
+| VoxCPM2 | ○ **mlx-audio 対応（声の複製あり）**、PyTorch MPS も公式対応 | × | MLX int8 で RTF 約1.0 |
+| Qwen3-TTS | ○ mlx-audio 対応（**複製用の Base 版は公式の一覧で未確認** (要検証)） | △ | MLX で RTF 0.6〜1.7 |
+| CosyVoice3 | △ 公式に Mac の記載なし | △ | |
+| Chatterbox | △ README に mps の記載のみ | △ | 速度の実測なし |
+| GPT-SoVITS | ○ MPS 対応 | ○ CPU 可 | M4 CPU で RTF 0.53（README） |
+| ローカル LLM 翻訳（8B 4bit） | ○ Ollama（MLX 対応）、推定 20〜28 トークン/秒 | △ 推定 6〜10 トークン/秒 | Apple 公式：M5 24GB で Qwen3-8B・gpt-oss-20b・Qwen3-14B が動作 |
+| pyVideoTrans 本体 | △ 配布版なし・ソースから導入。**Mac では GPU（CUDA）を常に無効にし、MPS を使うのは一部の TTS だけ**（`videotrans/util/gpus.py`） | ○ 配布 exe あり | Snapdragon 版 Surface は Python 3.10 固定のため事実上不可 |
+
+### 18.2 1時間・4人・約600行の会議を一括処理する時間 [推定]
+| 工程 | Mac M5 24GB | Windows CPU 16GB |
+|---|---|---|
+| 文字起こし | 4〜6分 | 25〜60分（SenseVoice なら約5分） |
+| 話者分離 | 4〜8分 | 20〜40分 |
+| 翻訳（8B） | 10〜20分 | 45〜120分 |
+| 声の複製 | 25〜90分 | 50〜135分以上 |
+| 合計 | **約0.8〜2.2時間（目安1.5時間）** | **約2〜6時間（典型3〜4時間）** |
+- 優先1（文字起こし＋話者分離）だけなら Mac で約10分 → 目標「1時間の会議を60分以内」に余裕あり
+- MacBook Air はファンなし。長時間の連続負荷での減速は未実測
+
+### 18.3 推奨
+1. 本番PCは **MacBook Air M5 24GB**（ほぼ全部品に Mac 向けの高速版があり、Windows CPU の3〜5倍速い見込み）。Snapdragon 版 Surface は避ける
+2. Mac では mlx-audio のローカルサーバー（OpenAI 互換の `/v1/audio/transcriptions`・`/v1/audio/speech`）を立てて pyVideoTrans から呼ぶ案が、本体の改造を最小にできる。ただし**サーバーが声の複製用の手本音声を受け取れるかは未確認** (要検証)
+3. 本番の声の複製を Colab に出すのは不可（会議の訳文と声の手本は社外秘：D4）。速度が足りなければ、夜間の一括処理か社内ネットワーク内の GPU PC
+
+出典：[mlx-audio](https://github.com/Blaizzy/mlx-audio) / [VoxCPM](https://github.com/OpenBMB/VoxCPM) / [soniqo ベンチマーク](https://soniqo.audio/benchmarks) / [Qwen3-TTS CPU 量子化](https://ocdevel.com/blog/20260711-quantized-cpu-tts) / [Qwen3-TTS 3機種比較](https://tinycomputers.io/posts/the-real-cost-of-running-qwen-tts-locally-three-machines-compared.html) / [Cohere Transcribe ONNX](https://huggingface.co/OpenVoiceOS/cohere-transcribe-2b-onnx) / [sherpa-onnx SenseVoice](https://k2-fsa.github.io/sherpa/onnx/sense-voice/pretrained.html) / [mac-whisper-speedtest](https://github.com/anvanvan/mac-whisper-speedtest) / [speakrs（話者分離の速度）](https://github.com/avencera/speakrs/wiki) / [Apple：M5 での LLM](https://machinelearning.apple.com/research/exploring-llms-mlx-m5) / [llama.cpp 速度表](https://github.com/ggml-org/llama.cpp/discussions/4167) / [TranslateGemma（Ollama）](https://ollama.com/library/translategemma) / [GPT-SoVITS](https://github.com/RVC-Boss/GPT-SoVITS) / [PyTorch ARM ネイティブ版（Windows）](https://blogs.windows.com/windowsdeveloper/2025/04/23/pytorch-arm-native-builds-now-available-for-windows/)
