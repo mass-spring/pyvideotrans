@@ -19,7 +19,7 @@ from .profile_io import (
     write_speaker_map,
 )
 from .report import write_report
-from .script import Script, ScriptError, load_script, render_consent, total_est_sec
+from .script import Script, ScriptError, load_script, total_est_sec
 from .text_utils import PAUSE_BETWEEN_SENTENCES_SEC, norm_lang
 
 

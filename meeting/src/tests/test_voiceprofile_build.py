@@ -113,7 +113,6 @@ def test_refs_never_cut_inside_a_segment_and_start_and_end_in_noise(standard):
 
 def test_refs_audio_is_an_exact_slice_of_the_recording(standard):
     """音質は変えない (サンプリング周波数・振幅はそのまま)。切り口のフェード以外は元の録音と同じ。"""
-    rec = standard["rec"]
     c = standard["res"].refs[0]
     wav, sr = sf.read(standard["pdir"] / "refs" / c.ref_name, dtype="float32")
     orig, sr0 = sf.read(standard["wav"], dtype="float32")

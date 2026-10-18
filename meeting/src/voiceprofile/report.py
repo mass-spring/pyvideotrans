@@ -188,7 +188,6 @@ def _explain_sheet(wb, groups: list[tuple[str, list[Col]]]) -> None:
 def write_report(res: BuildResult, path: str | Path, command: str, written: dict | None = None) -> Path:
     emb = res.embedder_names
     files = res.files
-    units_by_idx = {u.idx: u for u in res.units}
     used_unit_ref = {u for c in res.refs for u in c.units}
     used_unit_eval = {e.unit for e in res.evals}
 

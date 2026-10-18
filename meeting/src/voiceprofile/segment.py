@@ -3,7 +3,8 @@
 方法: 10 ms ごとの音量 (voicecheck.features.analyze_frames) から、雑音の床と話し声の大きさを推定し、
 その中間にしきい値を置いて「音が出ている区間」を取る (ヒステリシス付き)。
 min_pause 秒より短い無音 (言葉の中の促音・息継ぎ・読点) は区間を分けない。
-webrtcvad が入っていれば、咳・物音などの「声でない区間」を落とすために使う。
+咳・物音・息づかいなどの「声でない区間」は、(1) 声の周期性 (有声フレームの割合) と、(2) webrtcvad (入っていれば) で落とす。
+webrtcvad は大きな物音を声と判定しがちなので、周期性の判定の方が効く。
 """
 from __future__ import annotations
 
@@ -19,6 +20,10 @@ FRAME_SEC = HOP / TARGET_SR     # 0.01 秒
 MIN_SPREAD_DB = 12.0            # 話し声と雑音の差がこれ未満だと、話している所を判定できない
 MIN_LOUD_FRAMES = 3             # しきい値を超えるフレームがこれ未満の山は雑音とみなす
 VAD_MIN_SPEECH_FRACTION = 0.15  # webrtcvad が「声」と判定したフレームの割合がこれ未満の区間は声でないとみなす
+MIN_VOICED_FRACTION = 0.12      # 周期性のある (有声の) フレームの割合がこれ未満の区間は声でないとみなす (実際の発話は 0.24〜0.65、雑音は 0)
+VOICING_FRAME = 512             # 32 ms (16 kHz)
+VOICING_THRESHOLD = 0.5         # 自己相関のピーク (正規化) がこれ以上なら有声
+VOICING_LAGS = (40, 228)        # 基本周波数 70〜400 Hz に相当するラグ (サンプル)
 
 
 class NoSpeechError(ValueError):
@@ -52,7 +57,7 @@ class Segmentation:
     speech_db: float            # 話し声の大きさの推定 (上位 10% 点)
     on_db: float                # 「話している」と判定するしきい値
     off_db: float               # 区間を終えるしきい値 (on より少し低い)
-    vad_used: str               # "webrtcvad" / "energy"
+    vad_used: str               # "energy" / "voicing" / "voicing+webrtcvad"
     notes: list[str] = field(default_factory=list)
 
 
@@ -68,6 +73,25 @@ def _webrtc_speech_fraction(y16: np.ndarray, seg: Segment, mode: int = 2) -> flo
     return float(np.mean(flags)) if flags else None
 
 
+def voiced_fraction(y16: np.ndarray, seg: Segment) -> float | None:
+    """区間のうち、声の周期性 (自己相関のピーク) があるフレームの割合。音の大きいフレーム (最大から 30 dB 以内) だけで数える。
+    短すぎて測れなければ None。"""
+    x = np.asarray(y16[int(seg.start * TARGET_SR):int(seg.end * TARGET_SR)], dtype=np.float64)
+    n = 1 + (len(x) - VOICING_FRAME) // HOP if len(x) >= VOICING_FRAME else 0
+    if n <= 0:
+        return None
+    idx = np.arange(VOICING_FRAME)[None, :] + HOP * np.arange(n)[:, None]
+    fr = x[idx]
+    fr = (fr - fr.mean(axis=1, keepdims=True)) * np.hanning(VOICING_FRAME)
+    acf = np.fft.irfft(np.abs(np.fft.rfft(fr, 2 * VOICING_FRAME, axis=1)) ** 2, 2 * VOICING_FRAME, axis=1)[:, :VOICING_FRAME]
+    energy = acf[:, 0] + 1e-12
+    lo, hi = VOICING_LAGS
+    peak = acf[:, lo:hi].max(axis=1) / energy
+    db = 10.0 * np.log10(energy / VOICING_FRAME)
+    active = db > db.max() - 30.0
+    return float(np.mean((peak > VOICING_THRESHOLD)[active])) if active.any() else 0.0
+
+
 def detect_segments(
     y16: np.ndarray,
     *,
@@ -77,7 +101,7 @@ def detect_segments(
 ) -> Segmentation:
     """16 kHz モノラル波形から発話区間を返す。
 
-    vad: "auto" (webrtcvad があれば使う) / "energy" (音量だけ) / "webrtc" (必須: 入っていなければエラー)
+    vad: "auto" (音量 + 声の周期性 + webrtcvad があれば使う) / "energy" (音量だけ) / "webrtc" (webrtcvad も必須: 入っていなければエラー)
     """
     if vad not in ("auto", "energy", "webrtc"):
         raise ValueError(f"vad は auto / energy / webrtc のどれかです: {vad}")
@@ -120,6 +144,14 @@ def detect_segments(
 
     vad_used = "energy"
     if vad != "energy":
+        kept_v: list[Segment] = []
+        for seg in segs:
+            vf = voiced_fraction(y16, seg)
+            if vf is not None and vf < MIN_VOICED_FRACTION:
+                rejected.append(Rejected(seg, f"声ではない可能性（周期的な成分が少ない: 有声フレーム {vf:.0%}）: 咳・物音・息づかいなど"))
+            else:
+                kept_v.append(seg)
+        segs, vad_used = kept_v, "voicing"
         try:
             import webrtcvad  # noqa: F401
 
@@ -130,11 +162,11 @@ def detect_segments(
                     rejected.append(Rejected(seg, f"声ではない可能性 (webrtcvad が声と判定した割合 {frac:.0%}): 咳・物音など"))
                 else:
                     kept.append(seg)
-            segs, vad_used = kept, "webrtcvad"
+            segs, vad_used = kept, "voicing+webrtcvad"
         except ImportError:
             if vad == "webrtc":
                 raise
-            notes.append("webrtcvad が入っていないため、音量だけで発話区間を判定しました (咳・物音を声と誤認することがあります)")
+            notes.append("webrtcvad が入っていないため、音量と声の周期性だけで発話区間を判定しました")
     if not segs:
         raise NoSpeechError("話している区間が見つかりませんでした")
     return Segmentation(segs, rejected, db, noise_db, speech_db, on_db, off_db, vad_used, notes)

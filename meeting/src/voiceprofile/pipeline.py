@@ -17,7 +17,6 @@ from voicecheck.audio import TARGET_SR, load_audio, resample
 from voicecheck.embedders import Embedder, load_embedders
 from voicecheck.features import extract_features
 
-from . import __version__
 from .align import (
     STATUS_ASR_ONLY,
     STATUS_NONE,
@@ -39,7 +38,7 @@ from .clips import (
     select_refs,
 )
 from .quality import FrameInfo, build_frame_info, clipping_ratio, measure_quality, noise_drift_db, peak_dbfs
-from .script import Script, Slot, ScriptError
+from .script import Script, Slot
 from .segment import NoSpeechError, Segment, Segmentation, detect_segments
 from .text_utils import join_texts, norm_lang
 

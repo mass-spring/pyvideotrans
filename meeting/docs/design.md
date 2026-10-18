@@ -77,6 +77,8 @@
 }
 ```
 
+実装（`meeting/src/voiceprofile`）では、上の項目に加えて refs ごとに score・text_status・consistency、プロファイル全体に stats・embedding・eval（評価用の取り置き）・enrollment を持つ。pyVideoTrans 側は必須項目だけを読む（research.md 19章）。
+
 **感情** `emotion.json`（行の開始時刻で対応付け。行番号だけに頼らない）
 ```json
 [{"start_time": 12340, "end_time": 15880, "label": "angry", "intensity": 0.6, "confidence": 0.72}]

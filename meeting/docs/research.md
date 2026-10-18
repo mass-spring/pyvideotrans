@@ -678,3 +678,19 @@ E4 の実装時の調査（サブエージェント sonnet）。**太字は公�
 3. 本番の声の複製を Colab に出すのは不可（会議の訳文と声の手本は社外秘：D4）。速度が足りなければ、夜間の一括処理か社内ネットワーク内の GPU PC
 
 出典：[mlx-audio](https://github.com/Blaizzy/mlx-audio) / [VoxCPM](https://github.com/OpenBMB/VoxCPM) / [soniqo ベンチマーク](https://soniqo.audio/benchmarks) / [Qwen3-TTS CPU 量子化](https://ocdevel.com/blog/20260711-quantized-cpu-tts) / [Qwen3-TTS 3機種比較](https://tinycomputers.io/posts/the-real-cost-of-running-qwen-tts-locally-three-machines-compared.html) / [Cohere Transcribe ONNX](https://huggingface.co/OpenVoiceOS/cohere-transcribe-2b-onnx) / [sherpa-onnx SenseVoice](https://k2-fsa.github.io/sherpa/onnx/sense-voice/pretrained.html) / [mac-whisper-speedtest](https://github.com/anvanvan/mac-whisper-speedtest) / [speakrs（話者分離の速度）](https://github.com/avencera/speakrs/wiki) / [Apple：M5 での LLM](https://machinelearning.apple.com/research/exploring-llms-mlx-m5) / [llama.cpp 速度表](https://github.com/ggml-org/llama.cpp/discussions/4167) / [TranslateGemma（Ollama）](https://ollama.com/library/translategemma) / [GPT-SoVITS](https://github.com/RVC-Boss/GPT-SoVITS) / [PyTorch ARM ネイティブ版（Windows）](https://blogs.windows.com/windowsdeveloper/2025/04/23/pytorch-arm-native-builds-now-available-for-windows/)
+
+---
+
+## 19. 声の登録ツール（voiceprofile）（2026-10-18 追記）
+
+`meeting/src/voiceprofile` と朗読台本 `meeting/enroll/script_ja.md`・`script_ja.json` を作成（サブエージェント sonnet、opus がレビュー・テスト再実行）。
+
+- 台本：同意文（固定文）＋日本語18文（書き下ろし、自動車の設計会議を想定。清音・濁音・半濁音・拗音・促音・長音・撥音・外来語の音を一通り含む、約90秒）＋任意の英仏中 各3文。
+- 処理：発話区間の検出 → 台本の文と対応づけ（順番どおり／間でまとめる／読み飛ばし・言い直しを考慮した最適対応。任意で faster-whisper による確認）→ 文を丸ごと並べて8〜20秒の手本候補を作る（切り口は必ず無音の中）→ 点数（SNR 30%・一貫性 25%・長さ 20%・音割れ 10%・書き起こしの確かさ 10%・切れ目 5%）で3〜4本を選ぶ → `profile.json`・`refs/`・評価用の取り置き `eval/`・`enroll_report.xlsx`。
+- 手本は録音のサンプリング周波数のまま、音量・音質は無加工（前後8msのフェードのみ）。
+- **発見：webrtcvad は咳・物音などの大きな雑音を声と判定する**ため、声の周期性（有声フレームの割合）による判定を主にした。
+- `profile.json` は pyVideoTrans 側の読み込み（`videotrans/util/voice_profile.py`）の必須項目 {wav, text, lang, sec, snr_db} に加えて、score・text_status・consistency・stats・embedding・eval などを持つ（読み込みに問題がないことをテストで確認）。
+- 公開音声（LibriSpeech 3人）での通し実行：手本3〜4本・SNR 23〜60dB・一貫性 0.90〜0.96。手本と評価用（同じ人）の ECAPA 類似度 0.735〜0.825、別の人とは −0.05〜0.17。
+- 未確認：本物の 48kHz 日本語録音、Mac／Windows での実行、日本語の ASR 確認、台本を人が読んだときの自然さ。
+
+出典：[webrtcvad-wheels](https://pypi.org/project/webrtcvad-wheels/) / [faster-whisper](https://github.com/SYSTRAN/faster-whisper) / [speechbrain ECAPA](https://huggingface.co/speechbrain/spkrec-ecapa-voxceleb)

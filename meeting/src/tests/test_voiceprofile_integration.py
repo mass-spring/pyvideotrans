@@ -151,3 +151,21 @@ def test_evaluation_clips_are_disjoint_from_refs_in_time(built):
         for a, b in e.pieces:
             for ra, rb in ref_ranges:
                 assert b <= ra + 1e-6 or a >= rb - 1e-6, (e.name, (a, b), (ra, rb))
+
+
+@pytest.mark.parametrize("speaker", ["1320", "5105", "2300"])
+def test_real_speech_is_never_rejected_as_non_voice(tmp_path, speaker):
+    """実際の発話 (3 人) の区間は、声の周期性・webrtcvad のどちらでも落とされない。発話の取りこぼしもない。"""
+    from voiceprofile.segment import detect_segments, voiced_fraction
+
+    if not (DATA / speaker).is_dir():
+        pytest.skip("公開テストデータがありません")
+    wav, spans = make_recording(DATA / speaker, tmp_path)
+    y, sr = sf.read(wav, dtype="float32")
+    seg = detect_segments(y)
+    assert seg.rejected == []
+    assert len(seg.segments) >= len(spans)
+    for t0, t1 in spans:                                      # どの発話も、半分以上が区間に入っている (発話の前後と中の 0.35 秒以上の無音は区間の外なので 100% にはならない)
+        covered = sum(max(0.0, min(s.end, t1) - max(s.start, t0)) for s in seg.segments)
+        assert covered > 0.5 * (t1 - t0)
+    assert min(voiced_fraction(y, s) or 1.0 for s in seg.segments) > 0.2

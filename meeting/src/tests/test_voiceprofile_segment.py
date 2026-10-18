@@ -8,7 +8,7 @@ from vp_synth import SR, make_recording
 from voicecheck.audio import TARGET_SR, resample
 from voiceprofile.clips import assemble, clip_pieces, pieces_duration
 from voiceprofile.quality import build_frame_info, clipping_ratio, measure_quality, noise_drift_db, peak_dbfs
-from voiceprofile.segment import NoSpeechError, Segment, detect_segments
+from voiceprofile.segment import NoSpeechError, Segment, detect_segments, voiced_fraction
 
 
 def _detect(rec, **kw):
@@ -22,7 +22,7 @@ def test_detects_every_segment_within_150ms():
     for found, (t0, t1) in zip(seg.segments, rec.segments, strict=True):
         assert found.start == pytest.approx(t0, abs=0.15)
         assert found.end == pytest.approx(t1, abs=0.15)
-    assert seg.vad_used in ("webrtcvad", "energy")
+    assert seg.vad_used in ("voicing+webrtcvad", "voicing")
     assert seg.on_db > seg.noise_db and seg.off_db < seg.on_db
 
 
@@ -51,11 +51,46 @@ def test_click_is_rejected_and_speech_kept():
     assert any("短すぎる" in r.reason for r in seg.rejected)
 
 
+@pytest.mark.parametrize("kind", ["white", "cough", "thud"])
+def test_loud_non_voice_sounds_are_rejected_by_the_voicing_check(kind):
+    """咳・物音のように大きいが周期的でない音は、声の区間にしない (webrtcvad は大きな雑音を声と判定しがちなので、周期性で見る)。"""
+    from scipy.signal import butter, sosfilt
+
+    rec = make_recording([3.0, 3.0], pauses=2.5, noise_amps=0.001)
+    rng = np.random.default_rng(1)
+    n = int(0.5 * SR)
+    if kind == "white":
+        burst = rng.standard_normal(n) * np.hanning(n)
+    elif kind == "cough":
+        burst = sosfilt(butter(4, [300, 3000], btype="band", fs=SR, output="sos"), rng.standard_normal(n)) * np.exp(-np.arange(n) / (0.12 * SR))
+    else:                                                    # 机を叩く音のような、低い音域の雑音が減衰していくもの
+        burst = sosfilt(butter(4, 400, fs=SR, output="sos"), rng.standard_normal(n)) * np.exp(-np.arange(n) / (0.1 * SR))
+    burst = (0.15 * burst / np.max(np.abs(burst))).astype(np.float32)
+    y = rec.y.copy()
+    i = int((rec.segments[0][1] + 0.8) * SR)
+    y[i:i + n] += burst
+    y16 = resample(y, SR, TARGET_SR)
+    assert len(detect_segments(y16, vad="energy").segments) == 3          # 音量だけだと声と区別できない
+    seg = detect_segments(y16)
+    assert len(seg.segments) == 2
+    assert any("周期的" in r.reason for r in seg.rejected)
+
+
+def test_voiced_fraction_separates_speech_from_noise():
+    rec = make_recording([3.0], noise_amps=0.001)
+    y16 = resample(rec.y, rec.sr, TARGET_SR)
+    t0, t1 = rec.segments[0]
+    assert voiced_fraction(y16, Segment(t0, t1)) > 0.6
+    noise = (0.1 * np.random.default_rng(0).standard_normal(TARGET_SR * 2)).astype(np.float32)
+    assert voiced_fraction(noise, Segment(0.0, 2.0)) < 0.05
+    assert voiced_fraction(noise, Segment(0.0, 0.01)) is None            # 短すぎて測れない
+
+
 def test_energy_only_and_webrtc_options():
     rec = make_recording([3.0, 3.0], pauses=1.0, noise_amps=0.002)
     y16 = resample(rec.y, rec.sr, TARGET_SR)
     assert detect_segments(y16, vad="energy").vad_used == "energy"
-    assert detect_segments(y16, vad="webrtc").vad_used == "webrtcvad"
+    assert detect_segments(y16, vad="webrtc").vad_used == "voicing+webrtcvad"
     with pytest.raises(ValueError):
         detect_segments(y16, vad="bogus")
 
