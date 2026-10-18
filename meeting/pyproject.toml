@@ -19,6 +19,7 @@ dependencies = [
 
 [project.scripts]
 voicecheck = "voicecheck.cli:main"
+voiceprofile = "voiceprofile.cli:main"
 
 # 話者埋め込み (声が似ているかの数値化)。`uv sync` で既定で入る。
 # 入れたくない時: uv sync --no-group embedders  (特徴量の計測だけは動く)
@@ -32,6 +33,11 @@ embedders = [
     "speechbrain>=1.0",          # ECAPA-TDNN (speechbrain/spkrec-ecapa-voxceleb, Apache-2.0)
     "resemblyzer>=0.1.4",        # Resemblyzer (Apache-2.0)
     "webrtcvad-wheels>=2.0.10",  # resemblyzer が必要とする webrtcvad のコンパイル不要版 (Windows でも入る)
+]
+# 任意: voiceprofile build --asr whisper (各発話を書き起こして台本と照合) 用。重いので既定では入れない。
+# 使うとき: uv sync --group asr   (faster-whisper は MIT。モデルは初回だけダウンロード、音声は手元の PC から出ない)
+asr = [
+    "faster-whisper>=1.0",
 ]
 
 [tool.uv]
@@ -54,7 +60,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/voicecheck"]
+packages = ["src/voicecheck", "src/voiceprofile"]
 
 [tool.pytest.ini_options]
 testpaths = ["src/tests"]
