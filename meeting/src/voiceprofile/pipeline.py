@@ -167,8 +167,10 @@ def build_profile(
         except NoSpeechError as e:
             raise BuildError(f"{path.name}: {e}") from e
         warnings += [f"{path.name}: {n}" for n in seg.notes]
-        for r in seg.rejected:
-            warnings.append(f"{path.name}: {r.seg.start:.1f}〜{r.seg.end:.1f} 秒を除外しました ({r.reason})")
+        nonvoice = [r for r in seg.rejected if not r.reason.startswith("短すぎる")]    # 短い物音は多いので警告にしない (「区間」シートに記録)
+        if nonvoice:
+            times = ", ".join(f"{r.seg.start:.1f}秒" for r in nonvoice[:6]) + (" ほか" if len(nonvoice) > 6 else "")
+            warnings.append(f"{path.name}: 声ではない音（咳・物音の可能性）を {len(nonvoice)} 個、手本の対象から除外しました（{times}）")
         fd = FileData(k, path, y, sr, y16, len(y) / float(sr), _out_subtype(path), seg, build_frame_info(seg))
         drift = noise_drift_db(fd.info)
         if drift > 8.0:

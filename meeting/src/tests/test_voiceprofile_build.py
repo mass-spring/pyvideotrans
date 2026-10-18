@@ -16,7 +16,7 @@ from openpyxl import load_workbook
 from synth import FakeEmbedder
 from vp_helpers import load_fork_voice_profile
 from vp_synth import durations_for_slots, make_recording
-from voiceprofile.align import STATUS_ASR, STATUS_COUNT_OK, STATUS_ESTIMATED
+from voiceprofile.align import STATUS_ASR, STATUS_COUNT_OK, STATUS_ESTIMATED, STATUS_GAP_OK
 from voiceprofile.pipeline import BuildError, BuildOptions, build_profile
 from voiceprofile.profile_io import write_profile
 from voiceprofile.report import write_report
@@ -332,6 +332,37 @@ def test_extra_segment_from_a_false_start_is_excluded_from_refs(tmp_path, script
     for c in res.refs:
         assert un[0].idx not in c.units
         assert all(un[0].start >= b or un[0].end <= a for a, b in c.pieces)    # 失敗の区間は手本の音声に入らない
+
+
+def test_sentences_split_by_comma_pauses_are_regrouped_and_never_cut_there(tmp_path, script):
+    """読点で息をついて 2 つに分かれた文 (0.45 秒の間) を、文の間の長い無音との違いで 1 文に戻す。手本の切り口は読点の間には来ない。"""
+    slots = script.slots(["ja"])
+    rng = np.random.default_rng(15)
+    parts = []
+    for s_ in slots:
+        if s_.role == "speech" and s_.est_sec > 3.5 and rng.random() < 0.6:
+            f = float(rng.uniform(0.35, 0.65))
+            parts.append([s_.est_sec * f, s_.est_sec * (1 - f)])
+        else:
+            parts.append(s_.est_sec)
+    rec = make_recording(parts, pauses=1.1, inner_pause=0.45, noise_amps=0.002, seed=15)
+    wav = tmp_path / "commas.wav"
+    sf.write(wav, rec.y, rec.sr, subtype="PCM_16")
+    res = _build(_opts(tmp_path, [wav], script))
+    n_split = sum(len(g) > 1 for g in rec.groups)
+    assert n_split >= 5 and len(res.atoms) == len(rec.segments) > len(slots)
+    assert [u.slot_ids for u in res.units] == [[s_.id] for s_ in slots]
+    assert all(u.status == STATUS_GAP_OK for u in res.units)
+    assert [len(u.atoms) for u in res.units] == [len(g) for g in rec.groups]
+    assert any("読点" in w for w in res.warnings)
+    by_id = {s_.id: s_ for s_ in slots}
+    index = {s_.id: i for i, s_ in enumerate(slots)}
+    for c in res.refs:
+        assert c.status == STATUS_GAP_OK and c.text == "".join(by_id[i].text for i in c.slot_ids)
+        _piece_edges_in_pauses(c.pieces, rec.segments)
+        for sid in c.slot_ids:                                    # 文の部分は全部、同じ範囲の中 (読点の間で切れていない)
+            first, last = (rec.segments[g] for g in (rec.groups[index[sid]][0], rec.groups[index[sid]][-1]))
+            assert any(a <= first[0] and last[1] <= b for a, b in c.pieces)
 
 
 def test_skip_first_option_drops_leading_segments_and_aligns_the_rest(tmp_path, script):

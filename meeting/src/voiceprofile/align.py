@@ -18,6 +18,7 @@ from .script import Slot
 from .text_utils import containment, join_texts, text_similarity
 
 STATUS_COUNT_OK = "count_ok"      # 区間数と文数が一致し、順番どおりに対応づけた
+STATUS_GAP_OK = "gap_ok"          # 文の途中の間（読点）で分かれた区間を、間の長さでまとめたら、文の数と一致した
 STATUS_ESTIMATED = "estimated"    # 長さから推定した (数が合わないため)
 STATUS_ASR = "asr"                # ASR の結果が台本とよく一致した
 STATUS_ASR_WEAK = "asr_weak"      # ASR の結果が台本と少ししか一致しない
@@ -28,6 +29,7 @@ STATUS_UNASSIGNED = "unassigned"  # どの文にも対応しなかった区間 (
 
 STATUS_JA = {
     STATUS_COUNT_OK: "順番どおり（数が一致）",
+    STATUS_GAP_OK: "順番どおり（間の長さでまとめた）",
     STATUS_ESTIMATED: "推定（長さから）",
     STATUS_ASR: "ASRで確認",
     STATUS_ASR_WEAK: "ASRと一致度が低い",
@@ -38,11 +40,11 @@ STATUS_JA = {
 }
 # 手本の点数に使う「書き起こしの信頼度」(0〜1)
 STATUS_TRUST = {
-    STATUS_ASR: 1.0, STATUS_COUNT_OK: 0.9, STATUS_ESTIMATED: 0.5, STATUS_NONE: 0.5, STATUS_ASR_ONLY: 0.5,
+    STATUS_ASR: 1.0, STATUS_COUNT_OK: 0.9, STATUS_GAP_OK: 0.8, STATUS_ESTIMATED: 0.5, STATUS_NONE: 0.5, STATUS_ASR_ONLY: 0.5,
     STATUS_ASR_WEAK: 0.35, STATUS_CHECK: 0.0, STATUS_UNASSIGNED: 0.0,
 }
 STATUS_RANK = [STATUS_CHECK, STATUS_UNASSIGNED, STATUS_ASR_WEAK, STATUS_ESTIMATED, STATUS_ASR_ONLY, STATUS_NONE,
-               STATUS_COUNT_OK, STATUS_ASR]
+               STATUS_GAP_OK, STATUS_COUNT_OK, STATUS_ASR]
 
 # DP の費用 (長さの比の対数 |ln r| と同じ尺度。1 文 1 区間でぴったり = 0)
 PEN_BLOCK = {(1, 1): 0.0, (2, 1): 0.45, (3, 1): 1.0, (1, 2): 0.55, (1, 3): 1.2}
@@ -57,6 +59,9 @@ ASR_SPLIT_MIN_CONTAINMENT = 0.7
 ASR_DURATION_WEIGHT = 0.25
 ORDER_MAX_LN_RATIO = math.log(2.2)   # 数が一致した時、長さの比がこれを超える対応は「要確認」
 DP_MAX_LN_RATIO = math.log(1.7)
+GAP_SEPARATION_SEC = 0.10  # 文の切れ目の間と、読点などの間の境が、これ以上はっきり離れていれば「間の長さでまとめる」を採用する
+GAP_SEPARATION_RATIO = 1.25  # (差だけでなく比も)
+GAP_MIN_BOUNDARY_SEC = 0.6   # 文の切れ目とみなす間の最小の長さ (これより短い間は読点の可能性が高い)
 ASR_OK_SIM = 0.7
 ASR_WEAK_SIM = 0.45
 
@@ -149,6 +154,35 @@ def _dp(durs, files, gaps, slots, asr_texts, scale):
     return path, float(dp[n, m])
 
 
+def merge_by_gaps(files: list[int], gaps: list[float], n_slots: int) -> list[list[int]] | None:
+    """区間の数 n が文の数より多いとき、いちばん長い間 (文の数 - 録音ファイル数) 個を文の切れ目とみなして区間をまとめる。
+
+    読点で息をついて分かれた区間を 1 文に戻すための処理。切れ目にした間と、そうでない間の長さがはっきり離れているときだけ
+    (GAP_SEPARATION_SEC・GAP_SEPARATION_RATIO 以上) かつ切れ目の間が GAP_MIN_BOUNDARY_SEC 以上のときだけ使う。
+    まとめた結果が文の数と一致しなければ None。"""
+    n = len(files)
+    k = n_slots - len(set(files))               # 同じファイルの中にある文の切れ目の数 (ファイルの変わり目は最初から切れ目)
+    if n <= n_slots or k < 0:
+        return None
+    within = sorted(((gaps[i], i) for i in range(n - 1) if files[i] == files[i + 1]), reverse=True)
+    if len(within) < k:
+        return None
+    if k > 0 and within[k - 1][0] < GAP_MIN_BOUNDARY_SEC:
+        return None
+    if 0 < k < len(within):
+        lo, nxt = within[k - 1][0], within[k][0]
+        if lo - nxt < GAP_SEPARATION_SEC or lo < nxt * GAP_SEPARATION_RATIO:
+            return None
+    cuts = {i for _, i in within[:k]}
+    groups: list[list[int]] = [[0]]
+    for i in range(n - 1):
+        if files[i] != files[i + 1] or i in cuts:
+            groups.append([i + 1])
+        else:
+            groups[-1].append(i + 1)
+    return groups if len(groups) == n_slots else None
+
+
 def align(
     atom_durs: list[float],
     atom_files: list[int],
@@ -180,6 +214,21 @@ def align(
         if bad:
             notes.append(f"区間数と文数は一致しましたが、{bad} 件で長さが文の長さと大きく違います。対応がずれていないか確認してください")
         return AlignResult(blocks, [], "order", scale, notes)
+
+    # ---- 読点などで分かれた区間を、間の長さで文にまとめる (ASR なしで、区間が文より多いとき) ----
+    if asr_texts is None and n > m:
+        groups = merge_by_gaps(atom_files, gaps, m)
+        if groups is not None:
+            gdurs = [sum(atom_durs[a] for a in g) for g in groups]
+            scale = _estimate_scale(gdurs, weights)
+            blocks = []
+            for j, g in enumerate(groups):
+                ln_r = math.log(max(gdurs[j], 1e-3) / max(scale * weights[j], 1e-3))
+                blocks.append(Block(g, [j], STATUS_GAP_OK if abs(ln_r) <= ORDER_MAX_LN_RATIO else STATUS_CHECK, None, math.exp(ln_r)))
+            if all(b.status == STATUS_GAP_OK for b in blocks):
+                notes.append(f"区間が {n} 個で文 ({m}) より多かったので、文の途中の短い間（読点など）で分かれた区間を、"
+                             "間の長さをもとに文にまとめました（念のため書き起こしを確認してください）")
+                return AlignResult(blocks, [], "gap", scale, notes)
 
     # ---- DP (長さ、または ASR の文字列の似かた) ----
     path, total = _dp(atom_durs, atom_files, gaps, slots, asr_texts, scale)

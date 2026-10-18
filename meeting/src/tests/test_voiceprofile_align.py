@@ -12,9 +12,11 @@ from voiceprofile.align import (
     STATUS_CHECK,
     STATUS_COUNT_OK,
     STATUS_ESTIMATED,
+    STATUS_GAP_OK,
     STATUS_NONE,
     STATUS_UNASSIGNED,
     align,
+    merge_by_gaps,
     worst_status,
 )
 from voiceprofile.script import load_script
@@ -201,3 +203,65 @@ def test_worst_status_picks_the_least_trustworthy():
     assert worst_status([STATUS_COUNT_OK, STATUS_ESTIMATED, STATUS_ASR]) == STATUS_ESTIMATED
     assert worst_status([STATUS_ASR, STATUS_CHECK]) == STATUS_CHECK
     assert worst_status([]) == STATUS_NONE
+
+
+# ---- 読点で息をついて分かれた区間を、間の長さで文にまとめる -------------------------------------------------
+def _commas(slots, seed, comma_gap=(0.36, 0.6), sentence_gap=(0.85, 1.5), p_split=0.5):
+    """各文を 1〜3 個の区間に分け (読点で息をつく)、区間の長さ・間・正解のまとまりを返す。"""
+    rng = np.random.default_rng(seed)
+    durs, gaps, exp = [], [], []
+    for j, s in enumerate(slots):
+        total = s.est_sec * (1 + rng.uniform(-0.08, 0.08))
+        k = 1 if rng.random() > p_split else int(rng.integers(2, 4))
+        cuts = np.sort(rng.uniform(0.25, 0.75, size=k - 1)) if k > 1 else np.array([])
+        edges = np.concatenate([[0.0], cuts, [1.0]])
+        first = len(durs)
+        for a, b in zip(edges[:-1], edges[1:], strict=True):
+            durs.append(total * (b - a))
+            gaps.append(float(rng.uniform(*comma_gap)))
+        gaps[-1] = float(rng.uniform(*sentence_gap))
+        exp.append((tuple(range(first, len(durs))), (s.id,)))
+    return durs, gaps, exp
+
+
+@pytest.mark.parametrize("seed", range(8))
+def test_commas_are_merged_by_gap_length_when_the_gap_structure_is_clear(slots, seed):
+    durs, gaps, exp = _commas(slots, seed)
+    assert len(durs) > len(slots)                          # 区間の方が文より多い
+    res = align(durs, [0] * len(durs), slots, None, gaps)
+    assert res.mode == "gap"
+    assert _blocks(res, slots) == exp
+    assert {b.status for b in res.blocks} == {STATUS_GAP_OK}
+    assert any("読点" in n for n in res.notes)
+
+
+def test_gap_merge_is_not_used_when_comma_and_sentence_gaps_overlap(slots):
+    durs, gaps, exp = _commas(slots, 3, comma_gap=(0.4, 1.3), sentence_gap=(0.8, 1.4))      # 読点の間が文の間と同じくらい長い
+    res = align(durs, [0] * len(durs), slots, None, gaps)
+    assert res.mode == "duration"                          # 長さで推定する方に切り替わる
+    assert all(b.status != STATUS_GAP_OK for b in res.blocks)
+
+
+def test_merge_by_gaps_unit():
+    files = [0] * 6
+    gaps = [0.4, 1.2, 0.45, 1.1, 0.0, 0.0]
+    assert merge_by_gaps(files, gaps, 3) == [[0, 1], [2, 3], [4, 5]]     # 長い間 1.2 と 1.1 が切れ目 (次は 0.45 で、はっきり離れている)
+    assert merge_by_gaps(files, gaps, 6) is None            # 区間 (6) と文 (6) が同じ数なら使わない
+    assert merge_by_gaps(files, gaps, 4) is None            # 4 つにするには 0.45 も切れ目にするが、次の 0.4 と 0.05 しか違わず決められない
+    assert merge_by_gaps([0, 0, 1, 1], [0.4, 9.0, 0.4, 0.0], 2) == [[0, 1], [2, 3]]    # ファイルの変わり目は最初から切れ目
+
+
+@pytest.mark.parametrize("seed", range(8))
+def test_gap_merge_does_not_force_a_wrong_grouping_after_a_skipped_sentence(slots, seed):
+    """文を 1 つ読み飛ばし、そのうえ読点の区間が増えて区間数が文数より多くなっても、間の長さで無理にまとめて『確か』と言わない。"""
+    durs, gaps, exp = _commas(slots, seed, p_split=0.7)
+    rng = np.random.default_rng(100 + seed)
+    k = int(rng.integers(5, 20))
+    drop = set(exp[k][0])
+    keep = [i for i in range(len(durs)) if i not in drop]
+    d2, g2 = [durs[i] for i in keep], [gaps[i] for i in keep]
+    if len(d2) <= len(slots):
+        pytest.skip("この乱数では区間数が文数以下になった")
+    res = align(d2, [0] * len(d2), slots, None, g2)
+    assert all(b.status != STATUS_GAP_OK for b in res.blocks)
+    assert res.mode == "duration"
