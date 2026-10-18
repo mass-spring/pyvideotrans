@@ -9,6 +9,7 @@ from videotrans.configure.config import tr, app_cfg, settings, logger
 from videotrans.configure.excepts import DubbingSrtError
 from videotrans.tts import run as run_tts, SUPPORT_CLONE
 from videotrans.util.help_misc import get_md5, vail_file
+from videotrans.util import voice_profile
 from videotrans.util.help_srt import get_subtitle_from_srt, delete_punc
 
 
@@ -55,12 +56,22 @@ class DubbingMixin:
         voice_role = self.cfg.voice_role
         logger.debug(f'{line_roles=}')
         _lang=self.cfg.detect_language.split('-')[0]
+        # clone reference from speaker profiles (None = upstream: each line's own audio); speaker.json is in subtitle line order
+        vprofiles = voice_profile.load_for_dubbing(settings)
+        speakers = voice_profile.read_speaker_labels(f'{self.cfg.cache_folder}/speaker.json') if vprofiles else []
         for i, it in enumerate(subs):
             if it['end_time'] < it['start_time'] or not it['text'].strip():
                 continue
             voice = line_roles.get(f'{it["line"]}', voice_role) if line_roles else voice_role
 
             _key = get_md5(f"{self.cfg.target_language_code}-{it['text']}-{voice}-{rate}-{self.cfg.volume}-{self.cfg.pitch}-{self.cfg.tts_type}-{settings.get('remove_dubb_silence', True)}-{settings.get('remove_dubb_all_silence', True)}-{settings.get('remove_dubb_silence_level', 'default')}")
+
+            is_clone = str(voice).strip().lower() == 'clone' and self.cfg.tts_type in SUPPORT_CLONE
+            ref = voice_profile.choose_clone_ref(vprofiles, speakers, i, _lang) if is_clone else None
+            ref_wav = voice_profile.stage_ref_wav(ref, self.cfg.cache_folder) if ref else None
+            if ref_wav:
+                # add the chosen reference to the cache key, so dubbing made with another reference is not reused
+                _key = get_md5(f"{_key}-{ref.cache_key()}")
 
             tmp_dict = {
                 "text": it['text'],
@@ -85,17 +96,22 @@ class DubbingMixin:
             if vail_file(_dubbing_cache):
                 # 直接使用缓存
                 shutil.copy2(_dubbing_cache,tmp_dict['filename'])
-            if str(voice).strip().lower() == 'clone' and self.cfg.tts_type in SUPPORT_CLONE:
-                tmp_dict['ref_wav'] = f"{self.cfg.cache_folder}/clone-{i}.wav"
+            if is_clone:
+                tmp_dict['ref_wav'] = ref_wav or f"{self.cfg.cache_folder}/clone-{i}.wav"
                 tmp_dict['ref_language'] = _lang
+                if ref_wav:
+                    # profile reference: use its own transcript and language; no per-line clip is cut (ref_profile)
+                    tmp_dict.update(ref_text=ref.text, ref_language=ref.lang or _lang, ref_profile=ref.profile)
             queue_tts.append(tmp_dict)
 
+        if vprofiles:
+            logger.debug(f'clone refs from speaker profiles: {len([d for d in queue_tts if d.get("ref_profile")])}/{len([d for d in queue_tts if d.get("ref_wav")])} lines')
         self.queue_tts = copy.deepcopy(queue_tts)
 
         if not self.queue_tts or len(self.queue_tts) < 1:
             raise RuntimeError(f'字幕长度为0，无法继续配音')
 
-        if len([it.get("ref_wav") for it in self.queue_tts if it.get("ref_wav")]) > 0:
+        if len([it.get("ref_wav") for it in self.queue_tts if it.get("ref_wav") and not it.get("ref_profile")]) > 0:
             self._create_ref_from_vocal()
 
         run_tts(

@@ -14,6 +14,7 @@ from videotrans.configure import constants
 from videotrans.task._stage_prepare import PrepareMixin
 from videotrans.task._stage_recogn import RecognMixin
 from videotrans.task._stage_diariz import DiarizMixin
+from videotrans.task._stage_emotion import EmotionMixin
 from videotrans.task._stage_translate import TranslateMixin
 from videotrans.task._stage_dubbing import DubbingMixin
 from videotrans.task._stage_align import AlignMixin
@@ -30,6 +31,7 @@ class TransCreate(
     AlignMixin,
     DubbingMixin,
     TranslateMixin,
+    EmotionMixin,
     DiarizMixin,
     RecognMixin,
     PrepareMixin,

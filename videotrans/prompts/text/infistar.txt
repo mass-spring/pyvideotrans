@@ -28,7 +28,7 @@ Yeah.
 [Line 3 translation]
 </TRANSLATE_TEXT>
 
-{context_info}
+{context_info}{emotion_info}
 
 # OUTPUT FORMAT
 - Output ONLY the translated text inside `<TRANSLATE_TEXT>` and `</TRANSLATE_TEXT>`.

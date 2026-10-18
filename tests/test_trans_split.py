@@ -16,6 +16,8 @@ EXPECTED_METHODS = [
     'diariz',
     # TranslateMixin
     'trans',
+    # EmotionMixin
+    '_ensure_emotion',
     # DubbingMixin
     'dubbing',
     '_tts',
@@ -59,6 +61,7 @@ def test_class_hierarchy():
     from videotrans.task._stage_recogn import RecognMixin
     from videotrans.task._stage_diariz import DiarizMixin
     from videotrans.task._stage_translate import TranslateMixin
+    from videotrans.task._stage_emotion import EmotionMixin
     from videotrans.task._stage_dubbing import DubbingMixin
     from videotrans.task._stage_align import AlignMixin
     from videotrans.task._stage_audio import AudioMixin
@@ -70,6 +73,7 @@ def test_class_hierarchy():
     assert issubclass(TransCreate, RecognMixin)
     assert issubclass(TransCreate, DiarizMixin)
     assert issubclass(TransCreate, TranslateMixin)
+    assert issubclass(TransCreate, EmotionMixin)
     assert issubclass(TransCreate, DubbingMixin)
     assert issubclass(TransCreate, AlignMixin)
     assert issubclass(TransCreate, AudioMixin)

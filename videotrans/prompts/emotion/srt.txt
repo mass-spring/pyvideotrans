@@ -1,0 +1,11 @@
+# EMOTION HINTS (OPTIONAL, READ-ONLY)
+
+The table below lists the emotion detected in the speaker's voice for some of the subtitle blocks inside `<INPUT>`. It is keyed by each block's **Index Number**. Blocks that are not listed have no hint. Intensity ranges from 0.0 (none) to 1.0 (very strong).
+
+{emotion_table}
+
+### RULES FOR USING THESE HINTS:
+1. Use the hints ONLY to choose wording, register (tone of voice) and interjections for the listed blocks. The source text remains the only source of meaning.
+2. Do NOT add emotions that are not present in the source text. If the source words are emotionally flat, keep the translation flat.
+3. Do NOT output the table, the emotion labels, the intensity values or any comment about them.
+4. Do NOT change the number of blocks, the Index Numbers or the timestamps. A hint never justifies merging, splitting, dropping or reordering blocks.

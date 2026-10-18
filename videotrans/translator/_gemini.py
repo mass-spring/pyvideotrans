@@ -42,7 +42,7 @@ class Gemini(BaseTrans):
                 ) if self.proxy_str else None
             )
             
-            message=self.prompt.replace('{batch_input}', f'{text}')
+            message=self._render_prompt(f'{text}')
             logger.debug(f'{message=}')
             result = client.interactions.create(
                 model=model,

@@ -7,6 +7,7 @@ from videotrans.translator._constants import (
     GOOGLE_INDEX, MICROSOFT_INDEX, ID_NAME_DICT
 )
 from videotrans.translator._lang_utils import get_source_target_code
+from videotrans.util.emotion import EmotionIndex
 
 
 def _check_gorm(name='google'):
@@ -35,7 +36,9 @@ def run(*, translate_type=0,
         is_test=False,
         source_code="",
         target_code="",
-        uuid=None,is_cuda=False) -> Union[List, str, None]:
+        uuid=None,is_cuda=False,
+        emotion_entries=None) -> Union[List, str, None]:
+    # emotion_entries: 行ごとの感情(EmotionEntry のリスト)。LLM チャネルのプロンプトにだけ使われる
     translate_type = int(translate_type)
     real_source_code, real_target_code = get_source_target_code(show_source=source_code,show_target=target_code, translate_type=translate_type)
     kwargs = {
@@ -46,7 +49,8 @@ def run(*, translate_type=0,
         "uuid": uuid,
         "is_test": is_test,
         "is_cuda":is_cuda,
-        "translate_type": translate_type
+        "translate_type": translate_type,
+        "emotion": EmotionIndex(emotion_entries) if emotion_entries else None
     }
     logger.debug(f'字幕翻译前参数:{[{k:v} for k,v in kwargs.items() if k !="text_list"]}')
 

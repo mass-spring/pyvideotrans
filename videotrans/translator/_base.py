@@ -12,6 +12,7 @@ from videotrans.configure.config import tr, settings, logger, TEMP_ROOT
 from videotrans.task.taskcfg import SrtItem
 from videotrans.util.help_srt import get_subtitle_from_srt,cleartext
 from videotrans.util.help_misc import get_md5, serial, get_prompt
+from videotrans.util.emotion import EmotionIndex, select_hint_rows, format_hint_table, HINT_MIN_CONFIDENCE
 
 
 @dataclass(repr=False)
@@ -51,6 +52,10 @@ class BaseTrans(BaseCon):
     max_tokens:int=8192
     reasoning_effort:str=None
     extra_body:Union[dict,None]=None
+    # 行ごとの感情(emotion.json 由来)。None なら感情ヒントなし
+    emotion: Optional[EmotionIndex] = None
+    # 現在のバッチ用の感情ヒント文。プロンプトの {emotion_info} に入る。空文字なら従来どおり
+    _emotion_info: str = field(init=False, default='')
 
     def __post_init__(self):
         super().__post_init__()
@@ -90,6 +95,7 @@ class BaseTrans(BaseCon):
                raise  DownloadModelsError(tr('model incomplete error',self.local_dir,tr('Help document'))+f'\n{self=}')
             raise
         finally:
+            self._emotion_info = ''
             if hasattr(self, '_unload'):
                 self._unload()
 
@@ -108,10 +114,15 @@ class BaseTrans(BaseCon):
         target_list = []
         logger.debug(f'以纯文本行形式翻译，每次翻译{self.trans_thread}行，翻译后暂停{self.wait_sec}s')
         
+        done_lines = 0
         for i, it in enumerate(split_source_text):
             """ it=['你好啊我的朋友','第二行']  此时 _item_task 接收的是 list[str] """
             if self._exit(): return
             self.signal(text=tr('starttrans') + f' {i} ')
+            # 感情ヒントの行番号は、バッチ内の位置(1始まり)
+            self._emotion_info = self._make_emotion_info(
+                (n + 1, self.text_list[done_lines + n]['start_time']) for n in range(len(it)))
+            done_lines += len(it)
             result = self._get_cache(it)
             if not result:
                 result = cleartext( self._item_task( ("\n".join(it)).strip() ) )
@@ -160,6 +171,8 @@ class BaseTrans(BaseCon):
             # 组成合法的srt格式字符串
             srt_str = "\n\n".join(
                 [f"{srt_dict['line']}\n{srt_dict['time']}\n{srt_dict['text'].strip()}" for srt_dict in it])
+            # 感情ヒントの行番号は、SRT の番号
+            self._emotion_info = self._make_emotion_info((srt_dict['line'], srt_dict['start_time']) for srt_dict in it)
             result = self._get_cache(srt_str)
             if not result:
                 result = self._item_task(srt_str.strip())
@@ -199,7 +212,34 @@ class BaseTrans(BaseCon):
 
     def _get_key(self, it) -> str:
         it=serial(it)
-        return get_md5(f'{self.translate_type}-{self.api_url}-{self.aisendsrt}-{self.model_name}-{self.source_code}-{self.target_code}-{it}')
+        # 感情ヒントがあるときだけキーに加える(無いときは従来と同じキー)
+        emotion = f'-{self._emotion_info}' if self._emotion_info else ''
+        return get_md5(f'{self.translate_type}-{self.api_url}-{self.aisendsrt}-{self.model_name}-{self.source_code}-{self.target_code}-{it}{emotion}')
+
+    def _make_emotion_info(self, keyed_starts) -> str:
+        """1バッチ分の (行番号, 開始時刻ms) から、プロンプトの {emotion_info} に入れる文を作る。
+
+        keyed_starts はジェネレータ可(感情が無効なら読まれない。start_time の無い text_list でも従来どおり動く)。
+
+        感情が無効・ヒントが1行も無い・プロンプトに {emotion_info} が無い(LLM 以外のチャネル含む)ときは ''。
+        行番号は SRT モードなら SRT の番号、テキストモードならバッチ内の位置(1始まり)。
+        """
+        if not self.emotion or '{emotion_info}' not in getattr(self, 'prompt', ''):
+            return ''
+        rows = select_hint_rows(keyed_starts, self.emotion, min_confidence=HINT_MIN_CONFIDENCE)
+        if not rows:
+            return ''
+        tpl_file = Path(f'{ROOT_DIR}/videotrans/prompts/emotion/{"srt" if self.aisendsrt else "text"}.txt')
+        try:
+            tpl = tpl_file.read_text(encoding='utf-8-sig').strip()
+        except OSError as e:
+            logger.warning(f'感情ヒントのテンプレートを読めないため、ヒントなしで翻訳します: {e}')
+            return ''
+        return tpl.replace('{emotion_table}', format_hint_table(rows)) + '\n\n'
+
+    def _render_prompt(self, batch_text: str) -> str:
+        """プロンプトの {emotion_info} と {batch_input} を埋める(LLM チャネル共通)"""
+        return self.prompt.replace('{emotion_info}', self._emotion_info).replace('{batch_input}', batch_text)
     
     def _set_context(self,target_code=None):
         if not self.text_list: return '' # LLM  error correction or LLM re-segment

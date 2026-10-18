@@ -11,6 +11,7 @@ from videotrans.configure.constants import DENOISE_URL_MS, PUNC_RESTORE_MS, DENO
 from videotrans.configure.excepts import SpeechToTextError
 from videotrans.recognition import run as run_recogn,  FASTER_WHISPER
 from videotrans.util.help_ffmpeg import conver_to_16k, runffmpeg, cut_from_audio
+from videotrans.util import voice_profile
 from videotrans.util.help_misc import vail_file, is_connect_hf
 from videotrans.util.help_srt import get_subtitle_from_srt, delete_punc
 
@@ -214,6 +215,7 @@ class RecognMixin:
                 logger.exception(f'克隆语音前分离出 44.1k 的原始音频失败',exc_info=True)
 
         logger.debug(f'语音克隆模式下，所用参考音频为:{vocal}')
+        sample_rate = voice_profile.clone_ref_sample_rate(settings)
         def _cutaudio_from_vocal(it):
             try:
                 logger.debug(f"裁切对应片段为参考音频：{it['startraw']}->{it['endraw']}\n当前{it=}")
@@ -221,7 +223,8 @@ class RecognMixin:
                     audio_file=vocal,
                     ss=it['startraw'],
                     to=it['endraw'],
-                    out_file=it['ref_wav']
+                    out_file=it['ref_wav'],
+                    sample_rate=sample_rate
                 )
             except Exception as e:
                 logger.exception(f'裁切参考音频失败:{it=},{e}', exc_info=True)
@@ -229,7 +232,8 @@ class RecognMixin:
         all_task = []
         with ThreadPoolExecutor(max_workers=min(8, len(self.queue_tts), os.cpu_count())) as pool:
             for item in self.queue_tts:
-                if item.get('ref_wav'):
+                # lines using a speaker-profile reference (ref_profile) need no clip
+                if item.get('ref_wav') and not item.get('ref_profile'):
                     all_task.append(pool.submit(_cutaudio_from_vocal, item))
             if len(all_task) > 0:
                 _ = [i.result() for i in all_task]

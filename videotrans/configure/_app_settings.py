@@ -151,6 +151,7 @@ class AppSettings:
             "batch_nums": 0,
             "uvr_models": "spleeter",
 
+            # upstream default 50 stretches audio far too much and changes the voice; 1.3 is recommended for clone dubbing
             "max_audio_speed_rate": 50,
             "max_video_pts_rate": 10,
 
@@ -203,6 +204,18 @@ class AppSettings:
             "process_max_gpu": 1,
             "device_name":"auto",
             "retry_nums": 2,
+            # --- emotion module (docs/meeting_emotion_ja.md) ---
+            # enable_emotion: pass per-line emotion hints to LLM translation prompts / emotion_backend: sensevoice | emotion2vec (not implemented) | none
+            "enable_emotion": False,
+            "emotion_backend": "sensevoice",
+            # --- speaker voice profiles for voice cloning (docs/meeting_voice_profile_ja.md) ---
+            # folder holding <name>/profile.json and speaker_map.json; "" = disabled (upstream behaviour)
+            "voice_profile_dir": "",
+            # clone reference: "line" = each subtitle line's own audio (upstream), "profile" = speaker profile clip
+            # (falls back to "line" for speakers without a profile); "" = "profile" if voice_profile_dir is set, else "line"
+            "clone_ref_mode": "",
+            # sampling rate (Hz) of clone references cut per line from the source audio (upstream: 16000)
+            "clone_ref_sample_rate": 44100,
             "proxy": ""
          }
         _d.update(self._models_dict())
@@ -248,6 +261,7 @@ class AppSettings:
             "backaudio_volume",
             "repetition_penalty",
             "compression_ratio_threshold",
+            "max_audio_speed_rate",
         ]
         int_type = [
             "crf",
@@ -256,7 +270,6 @@ class AppSettings:
             "video_codec",
             "noise_separate_nums",
             "batch_nums",
-            "max_audio_speed_rate",
             "max_video_pts_rate",
             "min_speech_duration_ms",
             "max_speech_duration_s",

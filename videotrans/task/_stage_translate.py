@@ -26,6 +26,8 @@ class TranslateMixin:
             return
 
         rawsrt = get_subtitle_from_srt(self.cfg.source_sub, is_file=True)
+        # 行ごとの感情(enable_emotion が有効なときだけ。無効・失敗時は [] で、従来どおりの翻訳)
+        emotion_entries = self._ensure_emotion(rawsrt)
         self.signal(text=tr('kaishitiquhefanyi'))
 
         target_srt = run_trans(
@@ -34,7 +36,8 @@ class TranslateMixin:
             uuid=self.uuid,
             source_code=self.cfg.source_language_code,
             target_code=self.cfg.target_language_code,
-            is_cuda=self.cfg.is_cuda
+            is_cuda=self.cfg.is_cuda,
+            emotion_entries=emotion_entries
         )
         if self._exit():  return
 

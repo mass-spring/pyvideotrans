@@ -1,5 +1,6 @@
 import json, re
 from videotrans.task.taskcfg import SrtItem
+from videotrans.util.emotion import SENSEVOICE_EMOTION_TAGS
 from typing import List, Dict, Any
 
 from ._utils import _write_log
@@ -27,6 +28,17 @@ def _remove_unwanted_characters(text: str) -> str:
     # 保留中文、日文、韩文、英文、数字和常见符号，去除其他字符
     allowed_characters = re.compile(r'<\|\w+\|>')
     return re.sub(allowed_characters, '', text)
+
+
+def _extract_emotion_tag(text: str) -> str:
+    """SenseVoice の感情タグ名を返す。例: '<|ja|><|HAPPY|><|Speech|>こんにちは' -> 'HAPPY'。無ければ ''。
+
+    _remove_unwanted_characters でタグを消す前に呼ぶ。言語タグ(<|ja|>)やイベントタグ(<|Speech|>)は対象外。
+    """
+    for name in re.findall(r'<\|(\w+)\|>', text or ''):
+        if name.upper() in SENSEVOICE_EMOTION_TAGS:
+            return name.upper()
+    return ''
 
 
 """

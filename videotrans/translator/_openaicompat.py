@@ -63,7 +63,7 @@ class OpenAICampat(BaseTrans):
                 'content': 'You are a top-tier Subtitle Translation Engine.'},
             {
                 'role': 'user',
-                'content': self.prompt.replace('{batch_input}', f'{text}')
+                'content': self._render_prompt(f'{text}')
             },
         ]
 

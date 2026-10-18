@@ -133,7 +133,7 @@ def precise_speed_up_audio(*, file_path:str=None, out:str=None, target_duration_
         logger.exception(f'音频加速失败:{e}')
 
 
-def cut_from_audio(*, ss, to, audio_file, out_file)->bool:
+def cut_from_audio(*, ss, to, audio_file, out_file, sample_rate=16000)->bool:
     from . import help_srt
     if not Path(audio_file).exists():
         return False
@@ -147,7 +147,7 @@ def cut_from_audio(*, ss, to, audio_file, out_file)->bool:
         "-to",
         help_srt.format_time(to, '.'),
         "-ar",
-        "16000",
+        str(int(sample_rate)),
         "-c:a",
         "pcm_s16le",
         out_file

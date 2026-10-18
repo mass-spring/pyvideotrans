@@ -19,7 +19,8 @@ def funasr_mlt(
         **kw
 ):
     from funasr import AutoModel
-    from videotrans.process._stt_utils import _write_log, _remove_unwanted_characters
+    from videotrans.process._stt_utils import _write_log, _remove_unwanted_characters, _extract_emotion_tag
+    from videotrans.util.emotion import save_raw_capture
     from modelscope.pipelines import pipeline
     from modelscope.utils.constant import Tasks
 
@@ -79,10 +80,21 @@ def funasr_mlt(
                 disable_pbar=True,
                 hotwords=hotword.split(',') if hotword else []
             )
+        emotion_raw = []
         for i, it in enumerate(res):
+            if model_name == 'iic/SenseVoiceSmall':
+                # 感情タグは除去する前に控える(字幕の本文は従来どおり)。emotion_raw.json は後段の感情ステージが使う
+                emotion_raw.append({'start_time': srts[i]['start_time'], 'end_time': srts[i]['end_time'],
+                                    'tag': _extract_emotion_tag(it['text'])})
             text = _remove_unwanted_characters(it['text'])
             srts[i]['text'] = text
             _write_log(logs_file, json.dumps({"type": "subtitles", "text": f'[{i}] {text}\n'}))
+        if emotion_raw:
+            try:
+                save_raw_capture(kw.get('cache_folder'), emotion_raw)
+            except Exception as e:
+                # 感情の控えが書けなくても文字起こしは続ける
+                logger.warning(f'SenseVoice 感情タグの保存に失敗、スキップ: {e}')
         return srts, None
     except Exception as e:
         msg = traceback.format_exc()
