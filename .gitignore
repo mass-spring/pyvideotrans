@@ -64,3 +64,9 @@ __pycache__
 .Trashes
 ehthumbs.db
 Thumbs.db
+
+# meeting-translator（個人の声・会議音声・出力は Git に入れない）
+meeting/data/
+meeting/profiles/
+meeting/outputs/
+meeting/.venv/

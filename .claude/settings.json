@@ -1,0 +1,25 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "f=\"$CLAUDE_PROJECT_DIR/meeting/docs/PLAN.md\"; [ -f \"$f\" ] && { echo \"=== meeting/docs/PLAN.md（作業・計画変更の前に必ず確認すること）===\"; cat \"$f\"; } 2>/dev/null || true",
+            "statusMessage": "PLAN.md を読み込み中"
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "echo \"[PLANリマインダー] 作業や計画変更の前に meeting/docs/PLAN.md を確認し、作業後はチェックボックス・作業ログ（9章）・変更履歴（10章）を更新し、meeting-translator ブランチに保存すること。\""
+          }
+        ]
+      }
+    ]
+  }
+}
