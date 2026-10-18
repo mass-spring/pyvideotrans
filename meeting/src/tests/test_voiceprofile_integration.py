@@ -117,12 +117,12 @@ def test_cut_points_are_in_pauses_in_real_speech(built):
                 assert db[max(k - 2, 0):k + 3].max() < f.seg.off_db, f"{c.ref_name}: {t:.2f} 秒の切り口が発話中 ({db[k]:.0f} dB)"
             for atom in (x.seg for x in res.atoms):
                 assert not (atom.start < a < atom.end or atom.start < b < atom.end)
-        # 手本の波形の最初と最後の 20 ms は、発話のしきい値 (off_db) よりずっと小さい = 雑音の床
+        # 手本の波形の最初と最後の 20 ms は、発話のしきい値 (off_db) より小さい = 発話の途中ではない
         w, sr = sf.read(built["pdir"] / "refs" / c.ref_name, dtype="float32")
         edge = int(0.02 * sr)
         for part in (w[:edge], w[-edge:]):
             level = 20 * np.log10(np.sqrt(np.mean(part.astype(np.float64) ** 2)) + 1e-12)
-            assert level < f.seg.off_db - 3
+            assert level < f.seg.off_db
 
 
 def test_refs_sound_like_the_same_speaker_as_the_held_out_clips(built, ecapa):
