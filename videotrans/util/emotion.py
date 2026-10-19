@@ -11,6 +11,7 @@ Per-line emotion data (EMOTION module, part 1).
 """
 import bisect
 import json
+import math
 import shutil
 from dataclasses import dataclass, asdict
 from pathlib import Path
@@ -46,7 +47,15 @@ SENSEVOICE_INTENSITY = 0.5
 SENSEVOICE_CONFIDENCE = 0.6
 
 SOURCE_SENSEVOICE = 'sensevoice'
+SOURCE_EMOTION2VEC = 'emotion2vec'  # 音声から emotion2vec+ で求めた行(process/_emotion2vec.py)
 SOURCE_NONE = 'none'  # 対応する検出結果が無かった行(neutral / 信頼度0)
+
+
+class EmotionBackendError(Exception):
+    """感情の検出元(backend)が使えない。モデルが無い・設定値が違う・音声が無い、など。
+
+    メッセージは利用者向けの日本語。task/_stage_emotion.py が警告として記録し、感情ヒントなしで続行する(翻訳は止めない)。
+    """
 
 
 @dataclass
@@ -57,9 +66,17 @@ class EmotionEntry:
     intensity: float = 0.0
     confidence: float = 0.0
     source: str = SOURCE_NONE
+    # 以下は任意の項目(無ければ emotion.json に書かない。SenseVoice のエントリは従来と同じ形のまま)
+    scores: Optional[Dict[str, float]] = None  # 分類ごとのスコア(emotion2vec+ の9分類。ラベルを選んだ根拠)
+    info: str = ''  # 作り方の控え(例 'emotion2vec_plus_large core4')。設定を変えたら作り直すための目印
 
     def to_dict(self) -> Dict:
-        return asdict(self)
+        d = asdict(self)
+        if not d.get('scores'):
+            d.pop('scores', None)
+        if not d.get('info'):
+            d.pop('info', None)
+        return d
 
     @classmethod
     def from_dict(cls, d: Dict) -> 'EmotionEntry':
@@ -74,6 +91,8 @@ class EmotionEntry:
             intensity=_clip01(_to_float(d.get('intensity'), 0.0)),
             confidence=_clip01(confidence),
             source=str(d.get('source') or SOURCE_NONE),
+            scores=_to_scores(d.get('scores')),
+            info=str(d.get('info') or ''),
         )
 
 
@@ -86,6 +105,15 @@ def _to_float(v, default: float) -> float:
 
 def _clip01(v: float) -> float:
     return max(0.0, min(1.0, v))
+
+
+def _to_scores(v) -> Optional[Dict[str, float]]:
+    """emotion.json の scores を {分類名: 数値} にする。辞書でない・数値にならない項目は捨てる。空なら None"""
+    if not isinstance(v, dict):
+        return None
+    out = {str(k): float(x) for k, x in v.items()
+           if isinstance(x, (int, float)) and not isinstance(x, bool) and math.isfinite(x)}
+    return out or None
 
 
 def _as_entry(e) -> EmotionEntry:

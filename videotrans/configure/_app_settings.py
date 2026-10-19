@@ -205,9 +205,15 @@ class AppSettings:
             "device_name":"auto",
             "retry_nums": 2,
             # --- emotion module (docs/meeting_emotion_ja.md) ---
-            # enable_emotion: pass per-line emotion hints to LLM translation prompts / emotion_backend: sensevoice | emotion2vec (not implemented) | none
+            # enable_emotion: pass per-line emotion hints to LLM translation prompts / emotion_backend: sensevoice | emotion2vec | none
             "enable_emotion": False,
             "emotion_backend": "sensevoice",
+            # emotion_backend "emotion2vec" (emotion2vec+ on the source audio, downloaded from ModelScope on first use):
+            # emotion2vec_model: large | base / emotion2vec_label_mode: "core4" = argmax over neutral/happy/angry/sad only,
+            # "all" = argmax over all 9 classes (fearful / disgusted / surprised can win) / emotion2vec_threads: 0 = auto (CPU count, max 4)
+            "emotion2vec_model": "large",
+            "emotion2vec_label_mode": "core4",
+            "emotion2vec_threads": 0,
             # --- speaker voice profiles for voice cloning (docs/meeting_voice_profile_ja.md) ---
             # folder holding <name>/profile.json and speaker_map.json; "" = disabled (upstream behaviour)
             "voice_profile_dir": "",

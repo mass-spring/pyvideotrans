@@ -183,11 +183,10 @@ def test_reads_final_source_subtitles_when_not_given(task, setting):
     assert [(e.start_time, e.label) for e in entries] == [(0, 'neutral'), (1000, 'angry')]
 
 
-def test_emotion2vec_is_a_stub_that_does_not_break_translation(task, setting):
+def test_emotion2vec_without_audio_does_not_break_translation(task, setting):
+    # the real backend is tested in tests/test_emotion2vec.py; here: no audio file in the task -> no emotion, no crash
     setting(enable_emotion=True, emotion_backend='emotion2vec')
     assert task._ensure_emotion(LINES) == []
-    with pytest.raises(NotImplementedError):
-        task._emotion_from_emotion2vec(LINES)
     assert not (task.cache / 'emotion.json').exists()
 
 
