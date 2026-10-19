@@ -71,6 +71,7 @@ profiles/
 - 右側の名前は **profiles 内のフォルダ名**と同じにします。
 - 対応表に書かなかったラベルは、**ラベルと同じ名前のフォルダ**（例：`profiles/spk2/`）があれば使います。
 - どちらもない話者、話者ラベルが取れない行は、従来どおりその行の元音声を使います。
+- **話者分離の `speaker_type` を `enrolled` にすると、`speaker.json` に最初から登録フォルダの名前が入る**ので、この対応表は不要です（[`meeting_enrolled_speakers_ja.md`](meeting_enrolled_speakers_ja.md)）。
 - 話者分離は画面（GUI）の単一動画で「話者分離」をオンにし、人数を指定したときだけ動きます（`cli.py` では動きません）。
 
 ## 4. 設定を変える

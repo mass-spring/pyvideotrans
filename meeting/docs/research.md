@@ -818,3 +818,11 @@ E4 の実装時の調査（サブエージェント sonnet）。**太字は公�
 - ライセンス（要検証）：ECAPA（speechbrain、Apache-2.0。学習データ VoxCeleb の条件は未確認）、TitaNet（NeMo の規約に従うとだけ記載）、ERes2Net・CAM++（3D-Speaker のコードは Apache-2.0、重みの記載なし）。採用前に条文を確認する。
 
 出典：[speechbrain/spkrec-ecapa-voxceleb](https://huggingface.co/speechbrain/spkrec-ecapa-voxceleb) / [3D-Speaker](https://github.com/modelscope/3D-Speaker) / [JVNV](https://sites.google.com/site/shinnosuketakamichi/research-topics/jvnv_corpus)
+
+**追記（同日）：pyVideoTrans に組み込み**。話者分離の種類に `enrolled`（登録した声と照合）を追加（新規 `videotrans/process/_enrolled_speakers.py`、本体は `_base.py` の分岐・設定2項目・選択肢・CLI の最小変更。サブエージェント sonnet、opus が差分とテストを確認）。
+- 名前は登録フォルダ名がそのまま付き、声の複製の手本選び（`voice_profile.py`）にそのまま流れる。埋め込みは同梱の TitaNet small（onnx、sherpa-onnx）。登録の平均は profile ごとにキャッシュ。
+- 実データでの再現：疑似会議A 93.45%・DER 18.8%、B 89.1%・DER 23.5%（研究の値と一致）。32分の会議で約95秒（CPU 1スレッド）。
+- 要確認の一覧 `speaker_diag.csv`（Excel で開ける）を出す。全336行のうち約21%に印が付き、誤り12行はすべて印の中にあった（差のしきい値 0.10 は未較正）。
+- 未登録の人が混ざると、声の近い登録者の名前が付く（未登録の78行中74行）。`enrolled_min_sim` で「unknown」にできる（0.55 で登録者の誤 unknown 3/258、未登録の unknown 50/78）が、実会議で較正が必要。
+- テスト：新規77件＋CLI 8件。本体の全テストの失敗一覧は改造前（本家由来の160件）と完全一致。GUI からの通し実行は未確認 (要検証)。
+- 使い方は `docs/meeting_enrolled_speakers_ja.md`。
