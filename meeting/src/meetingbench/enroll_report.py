@@ -125,7 +125,7 @@ def build_info(bench: ee.Bench, lay: Layout, command: str, embedders: list[str],
     from datetime import datetime
 
     manifest = reportinfo.load_manifest(lay)
-    repo = reportinfo.pvt_bridge.ensure_pvt_importable()
+    repo = reportinfo.pvt_bridge.REPO_ROOT      # import はしない（PySide6 の差し替えなど、プロセス全体への副作用を避ける）
     commit = reportinfo.git(["rev-parse", "--short", "HEAD"], repo)
     changed = reportinfo.git(["status", "--porcelain", "--", "videotrans"], repo)
     used = ea.used_in_meeting(manifest)
@@ -158,7 +158,8 @@ def build_info(bench: ee.Bench, lay: Layout, command: str, embedders: list[str],
         info = EMBEDDERS[e]
         v = ", ".join(f"{k} {x}" for k, x in (m.get("versions") or {}).items())
         sha = f" / SHA-256 {m['model_sha256']} / {m['model_bytes']:,} バイト" if m.get("model_sha256") else ""
-        items.append((f"埋め込み器 {e}", f"{info.label}。{m.get('dim')} 次元。モデル: {m.get('model_file')}{sha}。{v}（Python {m.get('python')}、CPU {m.get('threads')} スレッド）。"
+        dim = int(len(next(iter(bench.store[e].vec.values()))))
+        items.append((f"埋め込み器 {e}", f"{info.label}。{dim} 次元。モデル: {m.get('model_file')}{sha}。{v}（Python {m.get('python')}、CPU {m.get('threads')} スレッド）。"
                                           f"ライセンス: {info.license}。入手元: {info.origin}"))
         en = (m.get("enroll") or {}).get("all")
         if en:

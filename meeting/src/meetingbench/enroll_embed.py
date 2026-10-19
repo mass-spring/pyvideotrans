@@ -238,7 +238,9 @@ def run_embedding(name: str, lay: Layout, jvnv_dir: Path | str, say=print, varia
     meta.update({"embedder": name, "label": info.label, "license": info.license, "origin": info.origin, "threads": threads,
                  "model_file": str(getattr(emb, "model", "") or "~/.cache/voicecheck/ecapa"), "versions": emb.versions(),
                  "python": platform.python_version(), "pool_sec_per_emotion": pool_sec, "pool_seed": POOL_SEED,
-                 "pool_clips": len(pool), "dim": None})
+                 "pool_clips": len(pool)})
+    if len(store):
+        meta["dim"] = int(len(next(iter(store.vec.values()))))
     if isinstance(emb, SherpaEmbedder) and emb.model.is_file():
         import hashlib
 

@@ -142,12 +142,13 @@ cd meeting
 export PYTHONPATH=src
 PY=~/.venvs/pvt-diar/bin/python
 # 1) 埋め込みを作る（モデルを動かす部分。CPU 1 スレッド固定。onnx の2種は測定用環境、ECAPA は meeting の uv 環境で実行）
-nice -n 10 $PY -m meetingbench enroll-embed --embedder titanet eres2net --windows
-nice -n 10 uv run python -m meetingbench enroll-embed --embedder ecapa
+nice -n 10 $PY -m meetingbench enroll-embed --embedder titanet --windows        # 軽い（約5分）。--windows は区間の切り直しの見積もり用
+nice -n 10 $PY -m meetingbench enroll-embed --embedder eres2net                 # 重い（RTF 約0.13、約20分）。--windows は付けない（さらに約20分）
+nice -n 10 uv run python -m meetingbench enroll-embed --embedder ecapa --windows  # 約25分
 # 任意: CAM++（onnx を取得。TLS は検証あり）
 mkdir -p data/models && curl -fL -o data/models/3dspeaker_speech_campplus_sv_zh-cn_16k-common.onnx https://github.com/k2-fsa/sherpa-onnx/releases/download/speaker-recongition-models/3dspeaker_speech_campplus_sv_zh-cn_16k-common.onnx
 nice -n 10 $PY -m meetingbench enroll-embed --embedder campp --windows
-# 2) 採点して Excel を作る（約 1 条件 1 秒。結果は runs/enroll/results.jsonl に保存され、2回目以降は飛ばす）
+# 2) 採点して Excel を作る（1 条件 約1秒、初回は 1520 条件で約30分。結果は runs/enroll/results.jsonl に保存され、2回目以降は約1.5分）
 nice -n 10 $PY -m meetingbench enroll-report --out outputs/enroll_assign.xlsx
 ```
 

@@ -14,6 +14,8 @@ from asrcheck.evaluate import DER_COLLARS, EvalOptions
 from asrcheck.kpi import FAIL, MINIMUM, TARGET, Kpi
 from openpyxl import Workbook
 from openpyxl.chart import LineChart, Reference
+from openpyxl.chart.data_source import AxDataSource, StrRef
+from openpyxl.chart.series import SeriesLabel
 from openpyxl.styles import Alignment, Font
 from openpyxl.utils import get_column_letter
 
@@ -23,7 +25,7 @@ from .excel import CFG_JA, SEG_JA, VAR_JA
 from .excel import _hdr, _val
 
 EMB_SHORT = {"ecapa": "ECAPA", "titanet": "TitaNet small", "eres2net": "ERes2Net large", "campp": "CAM++"}
-EMB_NOTE = {"ecapa": "英語中心(VoxCeleb)", "titanet": "英語用", "eres2net": "中国語用", "campp": "中国語用"}
+EMB_NOTE = {"ecapa": "VoxCeleb で学習", "titanet": "英語用", "eres2net": "中国語用", "campp": "中国語用"}
 MODE_SHORT = {"mixed": "感情を混ぜる", "calm": "落ち着いた感情だけ"}
 
 
@@ -116,9 +118,13 @@ def facts(d: Data) -> list[str]:
     for w in d.extras.get("window", []):
         out.append(f"{emb_label(w['embedder'])}・録音{w['variant']}・登録180秒: 区間の中を窓で判定し話者の交代で切り直すと、話者正解率 {pct(w['acc_base'])} → {pct(w['acc_win'])}、"
                    f"DER(collar 0) {pct(w['der0_base'])} → {pct(w['der0_win'])}（切り直した区間は文字起こしのやり直しが必要。cpCER は未測定）。")
-    nonid = [k for k, a in d.agg.items() if not a["map_identity_all"]]
+    main = {k: a for k, a in d.agg.items() if k[6] is None}
+    nonid = [k for k, a in main.items() if not a["map_identity_all"]]
+    unk_nonid = [k for k, a in d.agg.items() if k[6] is not None and not a["map_identity_all"]]
     out.append("採点は asrcheck の標準（話者名の対応づけを自動で最適化）。名前をそのまま比べても同じかを確認: "
-               + ("全条件で、対応づけは名前どおり（F1→F1 …）だった。" if not nonid else f"{len(nonid)} 条件で名前どおりでない対応づけがあった（全指標シートの『名前どおり』列を参照）。"))
+               + (f"不明なしの全 {len(main)} 条件で、対応づけは名前どおり（F1→F1 …）だった。" if not nonid
+                  else f"{len(nonid)} 条件で名前どおりでない対応づけがあった（全指標シートの『名前どおり』列を参照）。")
+               + (f"（不明を使う条件では、不明が1人分の話者として数えられるため、{len(unk_nonid)} 条件で対応づけが名前どおりでない。）" if unk_nonid else ""))
     return out
 
 
@@ -349,11 +355,10 @@ def _compare(ws, d: Data) -> None:
             data = Reference(ws, min_col=c0, max_col=c0 + len(d.secs) - 1, min_row=r0, max_row=r0 + n - 1)
             ch.add_data(data, from_rows=True, titles_from_data=False)
             for s_i, s in enumerate(ch.series):
-                from openpyxl.chart.series import SeriesLabel
-                from openpyxl.chart.data_source import StrRef
-
                 s.tx = SeriesLabel(strRef=StrRef(f"'{ws.title}'!$A${r0 + s_i}"))
-            ch.set_categories(Reference(ws, min_col=2, max_col=1 + len(d.secs), min_row=head))
+            cat_ref = f"'{ws.title}'!${get_column_letter(c0)}${head}:${get_column_letter(c0 + len(d.secs) - 1)}${head}"
+            for s in ch.series:
+                s.cat = AxDataSource(strRef=StrRef(f=cat_ref))                     # 見出しは文字なので strRef（numRef だと 1,2,3… と表示される）
             ch.x_axis.delete = False
             ch.y_axis.delete = False
             ws.add_chart(ch, f"{get_column_letter(2 + 4 * len(d.secs) + 1)}{4 + i * 20}")
@@ -415,7 +420,7 @@ def _unk_smooth(ws, d: Data) -> None:
         r += 1
         ws.cell(r, 1, ("silero の区間ごとに 1.5 秒の窓（0.5 秒ずつ）で判定し、前後の多数決で整え、1 秒未満の部分は隣に吸収して、区間を話者ごとの部分に切り直した話者の時間割。"
                        "字幕に使うには、切り直した部分ごとに文字起こしをやり直す必要がある（ここでは文字は付けていないので cpCER は無い）。"
-                       "重なった発話は1人にしか付けられない。"))
+                       "重なった発話は1人にしか付けられない。窓の埋め込みを作った埋め込み器だけ載せている（ERes2Net large は時間がかかるため未作成）。"))
         r += 1
         heads3 = ["埋め込み", "録音", "話者正解率\n（区間ごとに1人）", "話者正解率\n（窓で切り直し）", "DER collar 0\n（区間ごとに1人）", "DER collar 0\n（窓で切り直し）",
                   "DER collar 0.25\n（区間ごとに1人）", "DER collar 0.25\n（窓で切り直し）", "字幕の区間数", "切り直し後の部分の数", "2つ以上に分かれた区間の数"]
