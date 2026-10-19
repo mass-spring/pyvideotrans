@@ -20,6 +20,7 @@ import numpy as np
 
 from . import pvt_bridge
 from .build import SR_HI, SR_LO, BuildParams, read_mono, rms_db, to_16k, trim_range
+from . import enroll_assign as ea
 from .enroll_assign import (POOL_SEC_PER_EMOTION, POOL_SEED, EmbeddingStore, build_pool, enr_key, seg_key, unit,
                             used_in_meeting)
 from .pipeline import Layout
@@ -40,19 +41,19 @@ class EmbedderInfo:
 
 EMBEDDERS: dict[str, EmbedderInfo] = {
     "ecapa": EmbedderInfo("ecapa", "ECAPA-TDNN（speechbrain/spkrec-ecapa-voxceleb）", "ecapa", None,
-                          "Apache-2.0（モデルカードの表記）。学習データ VoxCeleb の利用条件は (要検証)",
+                          "Apache-2.0（Hugging Face のモデルカードの license 欄で確認）。学習データ VoxCeleb1+2 の利用条件は (要検証)",
                           "https://huggingface.co/speechbrain/spkrec-ecapa-voxceleb"),
     "titanet": EmbedderInfo("titanet", "NeMo TitaNet small（英語用・sherpa-onnx）", "sherpa", "nemo_en_titanet_small.onnx",
-                            "NVIDIA NeMo の TitaNet small。ライセンスは (要検証)（CC-BY-4.0 とされる）。pyVideoTrans の built が language=ja で使う埋め込み",
+                            "NGC のモデルカードに『NeMo ツールキットのライセンスに従う』とある（ツールキットは Apache-2.0 とされる (要検証)）。sherpa-onnx 用に変換された onnx の再配布条件も (要検証)。pyVideoTrans の built が language=ja で使う埋め込み",
                             "https://github.com/k2-fsa/sherpa-onnx/releases/tag/speaker-recongition-models"),
     "eres2net": EmbedderInfo("eres2net", "3D-Speaker ERes2Net large（中国語用・sherpa-onnx）", "sherpa",
                              "3dspeaker_speech_eres2net_large_sv_zh-cn_3dspeaker_16k.onnx",
-                             "Apache-2.0（3D-Speaker のコード）。重み・学習データの条件は (要検証)。pyVideoTrans の built が language=zh で使う埋め込み",
+                             "3D-Speaker のコードは Apache-2.0（リポジトリで確認）。事前学習済み重みのライセンスはリポジトリに記載なし (要検証)。pyVideoTrans の built が language=zh で使う埋め込み",
                              "https://github.com/modelscope/3D-Speaker"),
     "campp": EmbedderInfo("campp", "3D-Speaker CAM++（中国語用・sherpa-onnx）", "sherpa",
                           "3dspeaker_speech_campplus_sv_zh-cn_16k-common.onnx",
-                          "Apache-2.0（3D-Speaker のコード）。重み・学習データの条件は (要検証)",
-                          "https://github.com/modelscope/3D-Speaker"),
+                          "3D-Speaker のコードは Apache-2.0（リポジトリで確認）。事前学習済み重みのライセンスはリポジトリに記載なし (要検証)",
+                          "https://github.com/k2-fsa/sherpa-onnx/releases/tag/speaker-recongition-models（onnx。元は https://github.com/modelscope/3D-Speaker）"),
 }
 
 
@@ -217,8 +218,10 @@ def _acc(meta: dict, group: str, key: str, n: int, audio_sec: float, elapsed: fl
 
 
 def run_embedding(name: str, lay: Layout, jvnv_dir: Path | str, say=print, variants=("A", "B"), segs=SEG_KINDS_EMBED,
-                  pool_sec: float = POOL_SEC_PER_EMOTION, threads: int = 1, save_every: int = 150, embedder: SpeakerEmbedder | None = None) -> dict:
-    """登録候補と字幕の区間の埋め込みを作って保存する（あるものは飛ばす）。戻り値: メタ情報。"""
+                  pool_sec: float = POOL_SEC_PER_EMOTION, threads: int = 1, save_every: int = 150, embedder: SpeakerEmbedder | None = None,
+                  windows: bool = False) -> dict:
+    """登録候補と字幕の区間の埋め込みを作って保存する（あるものは飛ばす）。戻り値: メタ情報。
+    windows=True なら、silero の区間の中を窓（1.5秒、0.5秒ずつ）に分けた埋め込みも作る（区間の切り直しの見積もり用）。"""
     import soundfile as sf
 
     from .jvnv import load_index
@@ -295,6 +298,25 @@ def run_embedding(name: str, lay: Layout, jvnv_dir: Path | str, say=print, varia
                 _acc(meta, "segments", f"{v}:{seg}", len(todo_s), a_sec, t_emb)
             store.save(sp)
             mp.write_text(json.dumps(meta, ensure_ascii=False, indent=1), encoding="utf-8")
+            if windows and seg == "silero":
+                spans = sorted({sp for it in items for sp in ea.window_spans(it["start_ms"], it["end_ms"])})
+                todo_w = [sp for sp in spans if ea.win_key(v, seg, *sp) not in store]
+                say(f"[{name}] 録音{v} 窓（区間の中を {ea.WIN_MS}ms ずつ）: {len(spans)} 個のうち未処理 {len(todo_w)}")
+                t_emb = a_sec = 0.0
+                for i, (a, b) in enumerate(todo_w, start=1):
+                    y = y16[int(a * SR_LO / 1000):int(b * SR_LO / 1000)]
+                    t0 = time.perf_counter()
+                    vec = emb.embed(y)
+                    t_emb += time.perf_counter() - t0
+                    a_sec += len(y) / SR_LO
+                    store.put(ea.win_key(v, seg, a, b), vec, len(y) / SR_LO)
+                    if i % (save_every * 4) == 0:
+                        store.save(sp)
+                        say(f"    窓 {i}/{len(todo_w)}（{t_emb:.0f} 秒）")
+                if todo_w:
+                    _acc(meta, "windows", f"{v}:{seg}", len(todo_w), a_sec, t_emb)
+                store.save(sp)
+                mp.write_text(json.dumps(meta, ensure_ascii=False, indent=1), encoding="utf-8")
         del y16
     say(f"[{name}] 完了: 埋め込み {len(store)} 個 → {sp}")
     return meta

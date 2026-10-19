@@ -312,3 +312,74 @@ def smooth_short(labels: Sequence[str], sim: np.ndarray, starts_ms: Sequence[int
             best = max(cands, key=lambda j: sim[i, idx[labels[j]]] if labels[j] in idx else -1.0)
             out[i] = labels[best]
     return out
+
+
+# ---------------------------------------------------------------------------
+# 5. 区間の中を窓で判定して、話者の交代で切り直す（参考。字幕の区間に2人以上が混ざる問題への対策の見積もり）
+# ---------------------------------------------------------------------------
+WIN_MS, HOP_MS, MIN_PIECE_MS = 1500, 500, 1000
+KEY_WIN = "win:"
+
+
+def win_key(variant: str, seg: str, start_ms: int, end_ms: int) -> str:
+    return f"{KEY_WIN}{variant}:{seg}:{int(start_ms)}:{int(end_ms)}"
+
+
+def window_spans(start_ms: int, end_ms: int, win_ms: int = WIN_MS, hop_ms: int = HOP_MS) -> list[tuple[int, int]]:
+    """区間 [start_ms, end_ms) を win_ms の窓で hop_ms ずつずらして覆う（最後の窓は終わりに合わせる）。短い区間は 1 つの窓（区間全体）。"""
+    if end_ms - start_ms <= win_ms:
+        return [(int(start_ms), int(end_ms))]
+    spans = []
+    a = start_ms
+    while a + win_ms < end_ms:
+        spans.append((int(a), int(a + win_ms)))
+        a += hop_ms
+    spans.append((int(end_ms - win_ms), int(end_ms)))
+    return spans
+
+
+def timeline_from_windows(spans: Sequence[tuple[int, int]], sim_w: np.ndarray, speakers: Sequence[str], start_ms: int, end_ms: int,
+                          hop_ms: int = HOP_MS, min_piece_ms: int = MIN_PIECE_MS) -> list[tuple[int, int, str]]:
+    """窓ごとの類似度 (窓数, 話者数) から、区間の中を話者ごとの部分 [(開始ms, 終了ms, 名前)] に切り直す。
+
+    区間を hop_ms の升目に分け、升目の中心を覆う窓の類似度の平均で名前を決め → 前後 1 升の多数決で整え
+    → 同じ名前の続きをまとめ → min_piece_ms 未満の部分は隣の長い方に吸収する。"""
+    cuts = list(range(int(start_ms), int(end_ms), hop_ms)) + [int(end_ms)]
+    cells = [(cuts[i], cuts[i + 1]) for i in range(len(cuts) - 1)]
+    sp = np.asarray(spans)
+    lab = []
+    for a, b in cells:
+        mid = (a + b) / 2
+        cover = np.nonzero((sp[:, 0] <= mid) & (mid <= sp[:, 1]))[0]
+        if len(cover) == 0:
+            cover = np.array([int(np.argmin(np.abs((sp[:, 0] + sp[:, 1]) / 2 - mid)))])
+        lab.append(int(np.argmax(sim_w[cover].mean(axis=0))))
+    sm = list(lab)
+    for i in range(1, len(lab) - 1):
+        trio = lab[i - 1:i + 2]
+        top = max(set(trio), key=trio.count)
+        if trio.count(top) >= 2:
+            sm[i] = top
+    pieces: list[list] = []
+    for (a, b), l in zip(cells, sm):
+        if pieces and pieces[-1][2] == l:
+            pieces[-1][1] = b
+        else:
+            pieces.append([a, b, l])
+    while len(pieces) > 1:
+        short = [i for i, p in enumerate(pieces) if p[1] - p[0] < min_piece_ms]
+        if not short:
+            break
+        i = min(short, key=lambda k: pieces[k][1] - pieces[k][0])
+        nb = [j for j in (i - 1, i + 1) if 0 <= j < len(pieces)]
+        j = max(nb, key=lambda k: pieces[k][1] - pieces[k][0])
+        pieces[j][0], pieces[j][1] = min(pieces[j][0], pieces[i][0]), max(pieces[j][1], pieces[i][1])
+        del pieces[i]
+        merged: list[list] = []
+        for p in pieces:
+            if merged and merged[-1][2] == p[2]:
+                merged[-1][1] = p[1]
+            else:
+                merged.append(p)
+        pieces = merged
+    return [(int(a), int(b), speakers[l]) for a, b, l in pieces]

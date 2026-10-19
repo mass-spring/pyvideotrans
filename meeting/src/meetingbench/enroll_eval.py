@@ -209,6 +209,32 @@ class Bench:
             out["engine"] = eng
         return out
 
+    def evaluate_windows(self, e: str, v: str, sec: int = 180, mode: str = "mixed", seed: int = 0) -> dict | None:
+        """silero の区間の中を窓で判定し、話者の交代で切り直した話者の時間割（文字は付けない）を DER と話者正解率で採点する。
+        窓の埋め込みが無ければ None。"""
+        st, items = self.store[e], self.items[(v, "silero")]
+        enr = self.enrollment(e, mode, sec, seed)
+        hyp_segs: list[tuple[float, float, str]] = []
+        split = 0
+        for it in items:
+            spans = ea.window_spans(it["start_ms"], it["end_ms"])
+            keys = [ea.win_key(v, "silero", a, b) for a, b in spans]
+            if any(k not in st for k in keys):
+                return None
+            sim = ea.similarity(st.matrix(keys), enr, "mean")
+            pieces = ea.timeline_from_windows(spans, sim, enr.speakers, it["start_ms"], it["end_ms"])
+            split += len(pieces) > 1
+            hyp_segs += [(a / 1000, b / 1000, lab) for a, b, lab in pieces]
+        ref = sort_by_time(self.ref[v])
+        ref_segs = [(u.start, u.end, u.speaker) for u in ref if u.has_time and u.speaker]
+        out = {"pieces": len(hyp_segs), "segments": len(items), "split_segments": split}
+        for c in sorted({*DER_COLLARS, self.opts.collar}):
+            out[f"der_{c:g}"] = compute_der(ref_segs, hyp_segs, collar=c).der      # type: ignore[arg-type]
+        sa = speaker_accuracy([(u.start or 0.0, u.end or 0.0, u.speaker) for u in ref], hyp_segs)    # type: ignore[arg-type]
+        out["spk_acc"] = sa.n_correct / sa.n if sa.n else None
+        out["strict_acc"] = float(np.mean([u.dominant == u.ref_speaker for u in sa.utts])) if sa.utts else None
+        return out
+
     def assign_plain(self, s: Spec) -> list[str]:
         """不明を使わずに、いちばん近い登録者を選んだときのラベル（不明にした区間が本当は合っていたかを見るため）。"""
         from dataclasses import replace
