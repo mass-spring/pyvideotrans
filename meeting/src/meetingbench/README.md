@@ -124,10 +124,43 @@ PYTHONPATH=src ~/.venvs/pvt-diar/bin/python -m meetingbench report --out outputs
 - **ディスク**：モデル約1.4GB＋環境約2GB＋疑似会議約120MB。`pytest` の全体実行は一時ファイルを約800MB作るので、空きが少ないときは
   `uv run pytest -q -o tmp_path_retention_policy=failed -o tmp_path_retention_count=0` で実行すると、成功したテストの一時ファイルをすぐ消します。
 
-## 6. 開発者向けメモ
+## 6. 登録した声との照合を試す（PLAN §4.1 ②。`enroll-embed` と `enroll-report`）
 
-- テスト：`cd meeting && uv run pytest -q src/tests/test_meetingbench_*.py`（モデルのダウンロードなし。合成音声と偽の認識結果で、本体の `_assign_speakers` だけ実物を使う）。
-- 構成：`jvnv.py`（索引）、`build.py`（疑似会議）、`pvt_bridge.py`（本体の関数を import。PySide6 が無い環境では空の部品に差し替え）、`model_fetch.py`、`segments.py`（区間・SenseVoice）、`diarize.py`（本体の話者分離を呼ぶ）、`pipeline.py`（段階）、`scoring.py`（asrcheck で採点）、`excel.py`、`reportinfo.py`。
+built（教師なしクラスタリング）は誰が話しているかを当てられない（§3 の結果）ので、**参加者が事前に登録した声（約3分、D14）に、字幕の区間をいちばん近い人として割り当てる**方式を測ります。
+同じ疑似会議・同じ字幕の区間（正解の区間／silero）・同じ文字起こしを使い、built と並べて Excel `outputs/enroll_assign.xlsx` にします（`pseudo_meeting_asr.xlsx` の built の行はそのまま使います）。
+
+- 登録に使う発話は、**会議で使っていない JVNV の発話だけ**（`manifest.json` と照合。会議に使った発話が混ざるとエラー）。登録の長さ（10・30・60・180秒/人）、感情（6種を混ぜる／落ち着いた喜び・悲しみだけ）、
+  照合の方式（平均との類似度／登録発話との類似度の最大）、登録発話の選び方5通り（乱数）を変えて、話者正解率・DER・cpCER を測ります。
+- 埋め込み（声の特徴のベクトル）は4種。ECAPA（`voicecheck` のものを再利用）、pyVideoTrans が持っている onnx の TitaNet small（英語用）と ERes2Net large（中国語用）、CAM++（任意。onnx 約27MB）。
+- 不明（しきい値は登録音声だけから決める）、単純な平滑化、区間の中を1.5秒の窓で判定して話者の交代で切り直す見積もり（`--windows`）も測ります。結果は Excel の『不明と平滑化』シート。
+- **注意**: 登録も会議も同じスタジオ録音を同じ処理に通したもので、実会議より有利です。雑音・反響・マイク違いで測り直すまでは上限に近い参考値です (要検証)。
+
+### 手順（コピペで動く形。CPU 4コアで合計 1〜1.5 時間。途中で止まっても続きから再開）
+
+```
+cd meeting
+export PYTHONPATH=src
+PY=~/.venvs/pvt-diar/bin/python
+# 1) 埋め込みを作る（モデルを動かす部分。CPU 1 スレッド固定。onnx の2種は測定用環境、ECAPA は meeting の uv 環境で実行）
+nice -n 10 $PY -m meetingbench enroll-embed --embedder titanet eres2net --windows
+nice -n 10 uv run python -m meetingbench enroll-embed --embedder ecapa
+# 任意: CAM++（onnx を取得。TLS は検証あり）
+mkdir -p data/models && curl -fL -o data/models/3dspeaker_speech_campplus_sv_zh-cn_16k-common.onnx https://github.com/k2-fsa/sherpa-onnx/releases/download/speaker-recongition-models/3dspeaker_speech_campplus_sv_zh-cn_16k-common.onnx
+nice -n 10 $PY -m meetingbench enroll-embed --embedder campp --windows
+# 2) 採点して Excel を作る（約 1 条件 1 秒。結果は runs/enroll/results.jsonl に保存され、2回目以降は飛ばす）
+nice -n 10 $PY -m meetingbench enroll-report --out outputs/enroll_assign.xlsx
+```
+
+- 埋め込みは `data/testdata/pseudo_meeting/runs/enroll/emb_<名前>.npz`（Git に入れない）。条件を変えて採点し直すだけなら 2) だけで、数秒〜数分です。
+- `enroll-report` の主なオプション：`--embedder titanet`（絞る）、`--secs 30 180`、`--seeds 3`、`--force`（採点し直し）。
+- 出力：『まとめ』（built と並べた表と KPI の色）、『全指標』（条件×seed ごとの asrcheck の全列）、『登録時間ごとの比較』（表とグラフ）、『話者混同』、『不明と平滑化』、『説明』、『実行情報』（モデル・バージョン・ライセンス・JVNV の出典・処理時間と RTF）。
+- 採点の近道：CER は話者に依らないので区間ごとに1回だけ計算し、cpCER・DER・話者正解率を条件ごとに計算します（asrcheck の標準と同じ値になることをテストで確認）。
+  asrcheck は話者名の対応づけを自動で最適化するので、名前をそのまま比べた話者正解率（『全指標』の列）も並べて、名前の取り違えで有利になっていないことを確認します。
+
+## 7. 開発者向けメモ
+
+- テスト：`cd meeting && uv run pytest -q src/tests/test_meetingbench_*.py`（モデルのダウンロードなし。合成音声と偽の認識結果で、本体の `_assign_speakers` だけ実物を使う）。登録音声との照合は `test_meetingbench_enroll.py`（偽の埋め込み器で、埋め込み→採点→Excel まで通す）。
+- 構成：`jvnv.py`（索引）、`build.py`（疑似会議）、`pvt_bridge.py`（本体の関数を import。PySide6 が無い環境では空の部品に差し替え）、`model_fetch.py`、`segments.py`（区間・SenseVoice）、`diarize.py`（本体の話者分離を呼ぶ）、`pipeline.py`（段階）、`scoring.py`（asrcheck で採点）、`excel.py`、`reportinfo.py`。登録音声との照合：`enroll_assign.py`（選び方・照合・しきい値・平滑化。numpy だけ）、`enroll_embed.py`（埋め込み器とその実行）、`enroll_eval.py`（asrcheck で採点）、`enroll_excel.py` / `enroll_report.py`（Excel）。
 - 本体の `down_file_from_hf` は TLS の検証を切って通信するため使わず、`model_fetch.py` は検証ありで同じファイルを取得します。
 - 本体の `built` は、検出言語が `zh` 以外だと英語用の埋め込み（NeMo titanet small）を使います。日本語の会議でも `language='ja'` が渡るので英語用になります。
   `built-zh` 条件は、同じ関数に `language='zh'` を渡して中国語用（3D-Speaker）を試すもので、本体の設定を変える提案ではありません。

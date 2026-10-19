@@ -96,6 +96,26 @@ def facts(d: Data) -> list[str]:
             lo = min(vals)
             out.append(f"区間={g}の全条件（埋め込み器×登録時間×感情×方式×録音）で、話者正解率が最も低かったのは {pct(lo[0])}"
                        f"（{emb_label(lo[1][0])}・{lo[1][1]}秒・{MODE_SHORT[lo[1][2]]}・{ea.RULE_JA[lo[1][3]]}・録音{lo[1][4]}）。")
+    secs = d.secs
+    for e in d.embedders:
+        parts = []
+        for v in ("A", "B"):
+            seq = [(sec, d.a(e, sec, "mixed", "mean", v, "silero")) for sec in secs]
+            parts.append(f"録音{v} " + " → ".join(f"{sec}秒 {pct(a['spk_acc'])}" for sec, a in seq if a))
+        out.append(f"{emb_label(e)}・区間=silero・感情を混ぜる・平均との類似度: 登録の長さごとの話者正解率 " + " / ".join(parts) + "。")
+    big = max(secs) if secs else None
+    if big:
+        for e in d.embedders:
+            parts = []
+            for v in ("A", "B"):
+                m, c = d.a(e, big, "mixed", "mean", v, "silero"), d.a(e, big, "calm", "mean", v, "silero")
+                if m and c:
+                    parts.append(f"録音{v} 混ぜる {pct(m['spk_acc'])} / 落ち着いた感情だけ {pct(c['spk_acc'])}")
+            if parts:
+                out.append(f"{emb_label(e)}・登録{big}秒・区間=silero: 登録の感情の違い — " + "、".join(parts) + "。")
+    for w in d.extras.get("window", []):
+        out.append(f"{emb_label(w['embedder'])}・録音{w['variant']}・登録180秒: 区間の中を窓で判定し話者の交代で切り直すと、話者正解率 {pct(w['acc_base'])} → {pct(w['acc_win'])}、"
+                   f"DER(collar 0) {pct(w['der0_base'])} → {pct(w['der0_win'])}（切り直した区間は文字起こしのやり直しが必要。cpCER は未測定）。")
     nonid = [k for k, a in d.agg.items() if not a["map_identity_all"]]
     out.append("採点は asrcheck の標準（話者名の対応づけを自動で最適化）。名前をそのまま比べても同じかを確認: "
                + ("全条件で、対応づけは名前どおり（F1→F1 …）だった。" if not nonid else f"{len(nonid)} 条件で名前どおりでない対応づけがあった（全指標シートの『名前どおり』列を参照）。"))
