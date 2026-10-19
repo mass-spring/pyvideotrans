@@ -95,6 +95,20 @@ def cmd_report(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_enroll_embed(args: argparse.Namespace) -> int:
+    import os
+
+    for k in ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS"):
+        os.environ.setdefault(k, str(args.threads))      # CPU を取り合う環境では 1 本に固定する（モデルを読み込む前に設定）
+    from . import enroll_embed as ee
+    from . import pipeline as pl
+
+    lay = pl.Layout(args.data)
+    for name in args.embedder:
+        ee.run_embedding(name, lay, args.jvnv, say=say, threads=args.threads, pool_sec=args.pool_sec)
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     from .diarize import BACKENDS, NUM_SPEAKERS
     from .segments import SEG_KINDS
@@ -133,6 +147,15 @@ def build_parser() -> argparse.ArgumentParser:
     y.add_argument("--variant", nargs="+", default=["A", "B"], choices=["A", "B"])
     y.add_argument("-k", type=int, default=4, help="クラスタの数（人数）")
     y.set_defaults(func=cmd_sanity)
+
+    e = sub.add_parser("enroll-embed", help="登録音声との照合の準備: 登録候補と字幕の区間の話者埋め込みを作って保存（モデルを動かす。続きから再開できる）")
+    e.add_argument("--data", default="data/testdata/pseudo_meeting")
+    e.add_argument("--jvnv", default="data/testdata/jvnv", help="JVNV のフォルダ（登録に使う発話を選ぶ）")
+    e.add_argument("--embedder", nargs="+", required=True, choices=["ecapa", "titanet", "eres2net", "campp"],
+                   help="ecapa は meeting の uv 環境（speechbrain）、titanet / eres2net / campp は測定用環境（sherpa-onnx）で実行")
+    e.add_argument("--threads", type=int, default=1, help="CPU スレッド数（他の処理と同時なら 1）")
+    e.add_argument("--pool-sec", type=float, default=150.0, help="話者×感情ごとの登録候補の量（秒）")
+    e.set_defaults(func=cmd_enroll_embed)
 
     q = sub.add_parser("report", help="採点して Excel（まとめ・全指標・区間の診断・話者混同・発言別・実行情報）を作る")
     q.add_argument("--data", default="data/testdata/pseudo_meeting")
