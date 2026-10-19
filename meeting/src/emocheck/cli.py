@@ -17,7 +17,7 @@ from .labels import JA
 from .report import ReportData, write_report
 from .runners import SV_DEFAULT_MODEL, WHISPER_DEFAULT_MODEL, ModelRun, SenseVoiceRecognizer, WhisperRecognizer, run_model
 
-MODELS = ("sensevoice", "whisper")
+MODELS = ("sensevoice", "sensevoice-nounk", "whisper")
 
 
 def say(msg: str = "") -> None:
@@ -39,7 +39,8 @@ def build_parser() -> argparse.ArgumentParser:
     r = sub.add_parser("run", help="モデルを動かして、結果を Excel にまとめる")
     r.add_argument("--audio-dir", required=True, help="音声フォルダ (ラベル CSV の file 列は、ここからの相対パス)")
     r.add_argument("--labels", required=True, help="ラベル CSV (file,emotion,text。話者 speaker・区分 style の列は任意)")
-    r.add_argument("--models", nargs="+", choices=MODELS, default=["sensevoice"], help="動かすモデル (既定 sensevoice。whisper も比べるなら: sensevoice whisper)")
+    r.add_argument("--models", nargs="+", choices=MODELS, default=["sensevoice"],
+                   help="動かすモデル (既定 sensevoice)。sensevoice-nounk = SenseVoice に EMO_UNKNOWN を禁止して感情を選ばせた場合。例: sensevoice sensevoice-nounk whisper")
     r.add_argument("--dataset", choices=sorted(DATASET_PRESETS), help="データの出典・ライセンスを Excel に載せる (jvnv)")
     r.add_argument("--data-note", help="--dataset を使わないとき、データの出典・ライセンスを自分で書く")
     r.add_argument("--sv-model", default=SV_DEFAULT_MODEL, help=f"SenseVoice のモデル名/フォルダ (既定 {SV_DEFAULT_MODEL})")
@@ -62,7 +63,7 @@ def cmd_prepare_jvnv(args: argparse.Namespace) -> int:
     say(f"ラベル CSV を作りました: {Path(args.out).resolve()}")
     say(f"  音声 {stats['wavs']} 件 / 書き起こしが無い音声 {stats['no_text']} 件 / 使われなかった書き起こし {stats['unused_text']} 行")
     say("次は:")
-    say(f"  python -m emocheck run --audio-dir {args.jvnv_dir} --labels {args.out} --dataset jvnv --models sensevoice whisper")
+    say(f"  python -m emocheck run --audio-dir {args.jvnv_dir} --labels {args.out} --dataset jvnv --models sensevoice sensevoice-nounk whisper")
     return 0
 
 
@@ -89,23 +90,24 @@ def cmd_run(args: argparse.Namespace) -> int:
     runs: list[ModelRun] = []
     subsets: dict[str, str] = {}
     for m in args.models:
-        per = args.sv_subset if m == "sensevoice" else args.whisper_subset
+        per = args.whisper_subset if m == "whisper" else args.sv_subset
         use = stratified_subset(clips, per, args.seed)
-        subsets[m] = (f"全件（{len(use)} 件）" if len(use) == len(clips)
+        subsets[m.replace("-", "_")] = (f"全件（{len(use)} 件）" if len(use) == len(clips)
                       else f"『話者×感情』ごとに {per} 件ずつ抽出（乱数の種 {args.seed}）→ {len(use)} 件 / 全 {len(clips)} 件中")
         say(f"\n== {m}: {len(use)} 件を処理します ==")
-        t0 = time.perf_counter()
-        if m == "sensevoice":
-            rec = SenseVoiceRecognizer(args.sv_model, args.sv_language, "cpu", threads)
+        if m != "whisper":
+            rec = SenseVoiceRecognizer(args.sv_model, args.sv_language, "cpu", threads, ban_unk=(m == "sensevoice-nounk"))
         else:
             rec = WhisperRecognizer(args.whisper_model, "ja", "cpu", threads)
-        load_s = time.perf_counter() - t0
-        say(f"  モデルの準備 {load_s:.1f} 秒")
-        run = run_model(rec, use, (cache_dir / f"{rec.key}.jsonl") if cache_dir else None, load_s)
+        run = run_model(rec, use, (cache_dir / f"{rec.key}.jsonl") if cache_dir else None)
+        say(f"  モデルの準備 {run.load_sec:.1f} 秒（前回の結果だけで足りるときは 0 秒）")
         runs.append(run)
         if run.n_errors:
             say(f"  注意: {run.n_errors} 件で失敗しました（Excel の『1件ごとの結果』に理由が出ます）")
     notes = [f"{r.label}: {r.n_errors} 件の音声で認識に失敗しました（失敗した件は集計から除いています）" for r in runs if r.n_errors]
+    if "whisper" in args.models and args.whisper_model not in (WHISPER_DEFAULT_MODEL, "turbo"):
+        notes.append(f"Whisper は、比較の本命の {WHISPER_DEFAULT_MODEL} ではなく {args.whisper_model} で測っています。{args.whisper_model} のほうが小さく、"
+                     f"{WHISPER_DEFAULT_MODEL} より誤りが多くなる可能性が高いので、SenseVoice との優劣の判断には使わないでください（参考値）")
     d = ReportData(
         clips=clips, runs=runs, opts=NormOptions(lang="ja"),
         dataset_name=preset.get("name", ""), dataset_info=list(preset.get("info", [])) + ([("データの出典（自己申告）", args.data_note)] if args.data_note else []),

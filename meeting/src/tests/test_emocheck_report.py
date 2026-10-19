@@ -49,6 +49,7 @@ def test_write_report_sheets_and_numbers(tmp_path):
     assert "JVNV" in s and "SenseVoiceSmall" in s and "平常" in s and "70%" in s
     assert "4分類の正解率は測れていません" in s          # 平常の音声が無いことを明記
     assert "演技" in s                                   # データの性質の注意
+    assert "pyVideoTrans の今の使い方と同じ設定" in s
     # 正解率 2/4 = 50% (a: ○, b: ×, c: × 不明, d: 恐れ ○ → 実際は a と d の 2 件)
     acc_row = next(r for r in wb["まとめ"].iter_rows() if r[0].value and "感情の正解率" in str(r[0].value))
     assert acc_row[1].value == pytest.approx(0.5) and acc_row[2].value == 2 and acc_row[3].value == 4
@@ -79,7 +80,8 @@ def test_write_report_sheets_and_numbers(tmp_path):
     assert "喜び" in cer and "全モデル共通" in cer
     # 実行情報
     info = sheet_text(wb["実行情報"])
-    for must in ("CC BY-SA 4.0", "litagin/jvnv_corpus_v1_no_nv", "FunASR", "Whisper large-v3-turbo", "各グループ 1 件", "実行日時", "RTF", "処理時間"):
+    for must in ("CC BY-SA 4.0", "litagin/jvnv_corpus_v1_no_nv", "FunASR", "Whisper large-v3-turbo", "各グループ 1 件", "実行日時", "RTF", "処理時間",
+                 "CPU スレッド数"):
         assert must in info, must
 
 
@@ -189,3 +191,21 @@ def test_cli_still_writes_report_when_every_clip_fails(tmp_path, monkeypatch):
     assert "すべて失敗" in sheet_text(wb["感情の混同表"])
     assert "2 件の音声で認識に失敗" in sheet_text(wb["まとめ"])
     assert "モデルが壊れている" in sheet_text(wb["1件ごとの結果"])
+
+
+def test_report_with_two_sensevoice_settings(tmp_path):
+    d = build_data(tmp_path)
+    ban = ModelRun("sensevoice_nounk", "SenseVoiceSmall（EMO_UNKNOWN 禁止）", True, report_cer=False, info=[("モデル", "SenseVoiceSmall ban")])
+    for f, tag in {"F1/a.wav": "HAPPY", "F1/b.wav": "ANGRY", "M1/c.wav": "SAD", "M1/d.wav": "FEARFUL"}.items():
+        ban.results[f] = ClipResult("同じ文章", tag, 0.4)
+        ban.durations[f] = 2.0
+    d.runs.insert(1, ban)
+    wb = load_workbook(report.write_report(tmp_path / "r.xlsx", d))
+    s = sheet_text(wb["まとめ"])
+    assert "ban_emo_unk=True" in s and s.count("① 感情の聞き分け") == 2
+    ok = [r for r in wb["まとめ"].iter_rows() if r[0].value and "感情の正解率" in str(r[0].value)]
+    assert [round(r[1].value, 2) for r in ok] == [0.5, 1.0]            # 既定 2/4、禁止版 4/4
+    head = [c.value for c in wb["1件ごとの結果"][1]]
+    assert sum("禁止" in str(h) for h in head) == 3                      # 禁止版は感情の3列だけ (認識結果・CER・秒は出さない)
+    cer = sheet_text(wb["文字誤り率"])
+    assert "禁止" not in cer

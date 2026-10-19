@@ -115,7 +115,8 @@ def _write_summary(ws: Worksheet, d: ReportData, emo: list[EmotionStats], cers: 
 
     # ---- ① 感情 ----
     for st in emo:
-        r = _section(ws, r, f"① 感情の聞き分け — {st.model} の感情タグ（正解は {st.n} 件）")
+        now = "（pyVideoTrans の今の使い方と同じ設定）" if st.key == "sensevoice" else ""
+        r = _section(ws, r, f"① 感情の聞き分け — {st.model} の感情タグ{now}（正解は {st.n} 件）")
         _header(ws, r, ["指標", "値", "該当件数", "全体の件数", "95%信頼区間（下）", "95%信頼区間（上）"], widths=[46, 14, 14, 14, 14, 14])
         r += 1
         lo, hi = st.ci
@@ -143,7 +144,8 @@ def _write_summary(ws: Worksheet, d: ReportData, emo: list[EmotionStats], cers: 
             _cell(ws, r, 6, b, "0.0%")
             r += 1
         r += 1
-        _header(ws, r, ["感情ごとの正解率（再現率）", "正解率", "正解数", "件数", "95%信頼区間（下）", "95%信頼区間（上）", "いちばん多い間違い先"])
+        _header(ws, r, ["感情ごとの正解率（再現率）", "正解率", "正解数", "件数", "95%信頼区間（下）", "95%信頼区間（上）", "いちばん多い間違い先",
+                        "その感情と予測された件数", "適合率"])
         r += 1
         for row in st.per_emotion:
             lo, hi = row.ci
@@ -153,9 +155,15 @@ def _write_summary(ws: Worksheet, d: ReportData, emo: list[EmotionStats], cers: 
             _cell(ws, r, 4, row.n, "#,##0")
             _cell(ws, r, 5, lo, "0.0%")
             _cell(ws, r, 6, hi, "0.0%")
-            _cell(ws, r, 7, row.top_wrong)
+            _cell(ws, r, 7, row.top_wrong, wrap=True)
+            _cell(ws, r, 8, row.pred_n, "#,##0")
+            _cell(ws, r, 9, row.precision, "0.0%")
             r += 1
         r += 1
+        if st.model.endswith("禁止）"):
+            r = _note(ws, r, ("この表は、SenseVoice の推論オプション ban_emo_unk=True（EMO_UNKNOWN を出させず、ほかの感情タグから選ばせる）で測った値です。"
+                              "pyVideoTrans は今このオプションを使っていません。文章（文字起こし）は変わらず、感情タグだけが変わります。"
+                              "『不明』の列が 0 になり、残りの件がほかの感情に振り分けられます。"), 11, 48)
         r = _note(ws, r, (
             f"PLAN §5.3 の KPI は『平常・喜び・怒り・悲しみの4分類で{PLAN_TARGET:.0%}以上』です。"
             + ("" if st.has_neutral_truth else
@@ -191,7 +199,7 @@ def _write_summary(ws: Worksheet, d: ReportData, emo: list[EmotionStats], cers: 
         vals = [(x.cer, x.label) for x in t.by_emotion if x.counts.n_ref]
         if len(vals) >= 2:
             lo, hi = min(vals), max(vals)
-            ws.cell(r, 1, f"{t.model}（{t.scope}）: 感情ごとの CER は {JA[lo[1]]} {lo[0]:.1%} 〜 {JA[hi[1]]} {hi[0]:.1%}").alignment = WRAP
+            ws.cell(r, 1, f"{t.model} / {t.scope}: 感情ごとの CER は {JA[lo[1]]} {lo[0]:.1%} 〜 {JA[hi[1]]} {hi[0]:.1%}").alignment = WRAP
             ws.merge_cells(start_row=r, start_column=1, end_row=r, end_column=11)
             r += 1
     r += 1
@@ -301,8 +309,8 @@ def _write_recall(ws: Worksheet, emo: list[EmotionStats]) -> None:
         return
     for st in emo:
         r = _section(ws, r, f"{st.model}: 正解の感情ごと")
-        _header(ws, r, ["正解の感情", "件数", "正解数", "正解率（再現率）", "95%信頼区間（下）", "95%信頼区間（上）", "いちばん多い間違い先"],
-                widths=[22, 10, 10, 14, 14, 14, 26])
+        _header(ws, r, ["正解の感情", "件数", "正解数", "正解率（再現率）", "95%信頼区間（下）", "95%信頼区間（上）", "いちばん多い間違い先",
+                        "その感情と予測された件数", "適合率"], widths=[22, 10, 10, 14, 14, 14, 30, 14, 12])
         r += 1
         for row in st.per_emotion:
             lo, hi = row.ci
@@ -312,7 +320,9 @@ def _write_recall(ws: Worksheet, emo: list[EmotionStats]) -> None:
             _cell(ws, r, 4, row.recall, "0.0%", bold=True)
             _cell(ws, r, 5, lo, "0.0%")
             _cell(ws, r, 6, hi, "0.0%")
-            _cell(ws, r, 7, row.top_wrong)
+            _cell(ws, r, 7, row.top_wrong, wrap=True)
+            _cell(ws, r, 8, row.pred_n, "#,##0")
+            _cell(ws, r, 9, row.precision, "0.0%")
             r += 1
         lo, hi = st.ci
         _cell(ws, r, 1, "全体", bold=True)
@@ -324,7 +334,10 @@ def _write_recall(ws: Worksheet, emo: list[EmotionStats]) -> None:
         r += 1
         _cell(ws, r, 1, "平均再現率", bold=True)
         _cell(ws, r, 4, st.macro_recall, "0.0%", bold=True)
-        r += 2
+        r += 1
+        r = _note(ws, r, ("適合率は『その感情と予測した音声のうち、本当にその感情だった割合』です。何でも『怒り』と答えるモデルは、怒りの再現率が100%近くになりますが、"
+                          "適合率は低くなります。再現率と適合率を一緒に見てください。"), 9, 34)
+        r += 1
 
         if st.by_speaker:
             r = _section(ws, r, f"{st.model}: 話者 × 感情の正解率（空欄＝その組み合わせの音声なし）")
@@ -425,8 +438,9 @@ def _write_clips(ws: Worksheet, d: ReportData) -> None:
         if run.has_emotion:
             head += [f"{run.label}\n感情タグ", f"{run.label}\n予測した感情", f"{run.label}\n感情の一致"]
             widths += [14, 14, 10]
-        head += [f"{run.label}\n認識結果", f"{run.label}\nCER", f"{run.label}\n処理秒"]
-        widths += [40, 9, 9]
+        if run.report_cer:
+            head += [f"{run.label}\n認識結果", f"{run.label}\nCER", f"{run.label}\n処理秒"]
+            widths += [40, 9, 9]
     _header(ws, 1, head, widths=widths)
     for i, c in enumerate(d.clips, start=1):
         row = i + 1
@@ -439,6 +453,8 @@ def _write_clips(ws: Worksheet, d: ReportData) -> None:
                 else:
                     pred = predicted_label(res.tag)
                     vals += [(res.tag or "(なし)", None), (JA[pred], None), ("○" if pred == c.emotion else "×", None)]
+            if not run.report_cer:
+                continue
             if res is None:
                 vals += [(None, None)] * 3
             elif res.error:
@@ -464,6 +480,7 @@ EXPLAIN = [
     ("正解率（感情）", "正解の感情と、SenseVoice の感情タグが一致した件数 ÷ 全件数。", "6つの感情なら、でたらめに選んで約17%。高いほど良い。平常の音声が無いデータでは、平常を当てる力は測れない。"),
     ("再現率（感情ごとの正解率）", "ある感情の音声のうち、その感情と当てられた割合。", "低い感情は、別の感情や『平常』『不明』と間違えられている。混同表で行き先を見る。"),
     ("平均再現率", "感情ごとの再現率の平均。", "件数の多い感情に引っ張られない。全体の正解率との差が大きければ、感情によって得意不得意がある。"),
+    ("適合率", "ある感情と予測した音声のうち、本当にその感情だった割合（正解数 ÷ その感情と予測された件数）。", "再現率だけでは、何でも同じ感情と答えるモデルが良く見える。適合率が低い感情は、ほかの感情の音声を取り込んでいる。"),
     ("混同表", "行＝正解の感情、列＝予測。対角線（左上から右下）が正解。", "対角線以外の数字が大きい所が、間違えやすい組み合わせ。"),
     ("平常（NEUTRAL）と判定された割合", "感情タグが <|NEUTRAL|> だった件数 ÷ 全件数。", "感情のある声を『平常』と読むと、翻訳や声のトーンに感情が反映されない。"),
     ("不明（EMO_UNKNOWN）", "SenseVoice が <|EMO_UNKNOWN|> を出した件。『自信がない／判定しない』に近い出力。", "pyVideoTrans では不明を平常として扱う（map_sensevoice_tag）。この道具は別の列に分けて数え、まとめに読み替えた値も載せる。"),
@@ -511,6 +528,8 @@ def info_items(d: ReportData, cers: list[CerTable]) -> list[tuple[str, Any]]:
         items += run.info
         items.append(("処理した範囲", d.subsets.get(run.key, "全件")))
         items.append(("処理件数", f"{sp['n']} 件（うち前回の結果の再利用 {run.n_cached} 件 / 失敗 {run.n_errors} 件）"))
+        used = sorted({r.threads for r in run.results.values() if r.threads})
+        items.append(("CPU スレッド数", "・".join(map(str, used)) + "（その結果を出したときの設定）" if used else "(記録なし)"))
         items.append(("処理時間", f"モデル読み込み {run.load_sec:.1f} 秒 / 認識 合計 {sp['proc_sec']:.1f} 秒 / 音声 合計 {sp['audio_sec']:.1f} 秒 / RTF {sp['rtf']:.2f}"))
     items += [
         ("── 実行環境 ──", ""),

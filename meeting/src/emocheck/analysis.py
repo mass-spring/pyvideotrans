@@ -51,6 +51,7 @@ class EmotionRow:
     n: int
     correct: int
     top_wrong: str = ""          # いちばん多い間違い先 (日本語の文字列。無ければ '')
+    pred_n: int = 0              # その感情と予測された件数 (正解がどの感情でも数える)。適合率の分母
 
     @property
     def recall(self) -> float:
@@ -60,10 +61,16 @@ class EmotionRow:
     def ci(self) -> tuple[float, float]:
         return wilson(self.correct, self.n)
 
+    @property
+    def precision(self) -> float:
+        """適合率 = その感情と予測した音声のうち、本当にその感情だった割合。何でも同じ感情と答えると再現率だけ高くなるのを見抜くため。"""
+        return rate(self.correct, self.pred_n)
+
 
 @dataclass
 class EmotionStats:
     model: str
+    key: str
     n: int
     correct: int
     true_labels: list[str]                       # 混同表の行 (データにある感情だけ、ORDER の順)
@@ -157,7 +164,7 @@ def emotion_stats(clips: list[Clip], run: ModelRun) -> EmotionStats:
     per = []
     for t in true_labels:
         n = sum(matrix[t].values())
-        per.append(EmotionRow(t, n, matrix[t][t], _top_wrong(matrix[t], t)))
+        per.append(EmotionRow(t, n, matrix[t][t], _top_wrong(matrix[t], t), sum(matrix[x][t] for x in true_labels)))
     se: dict[tuple[str, str], tuple[int, int]] = {}
     for c in done:
         k, n = se.get((c.speaker, c.emotion), (0, 0))
@@ -172,7 +179,7 @@ def emotion_stats(clips: list[Clip], run: ModelRun) -> EmotionStats:
     core3_n = sum(sum(r.values()) for r in core3.values())
     core3_ok = sum(core3[t][t] for t in core3)
     return EmotionStats(
-        model=run.label, n=len(done), correct=sum(1 for c in done if preds[c.file] == c.emotion),
+        model=run.label, key=run.key, n=len(done), correct=sum(1 for c in done if preds[c.file] == c.emotion),
         true_labels=true_labels, pred_labels=list(PRED_LABELS), matrix=matrix, per_emotion=per,
         by_speaker=_rows_by(done, preds, lambda c: c.speaker) if any(c.speaker for c in done) else [],
         by_style=_rows_by(done, preds, lambda c: c.style) if any(c.style for c in done) else [],
@@ -253,6 +260,7 @@ def cer_table(clips: list[Clip], run: ModelRun, opts: NormOptions, scope: str, o
 def cer_tables(clips: list[Clip], runs: list[ModelRun], opts: NormOptions) -> list[CerTable]:
     """各モデルの『処理した全件』の表。モデルごとに処理した件が違うときは、全モデル共通の件での表も足す。"""
     tables = []
+    runs = [r for r in runs if r.report_cer]
     sets = [{c.file for c in clips if c.file in r.results and not r.results[c.file].error and c.text.strip()} for r in runs]
     common = set.intersection(*sets) if sets else set()
     differ = any(s != sets[0] for s in sets)

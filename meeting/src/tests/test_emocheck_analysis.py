@@ -61,6 +61,9 @@ def test_emotion_stats_matrix_and_rates():
     assert rec["happy"].recall == pytest.approx(2 / 3) and rec["angry"].recall == pytest.approx(0.5)
     assert rec["sad"].recall == pytest.approx(0.5) and rec["fearful"].recall == 0
     assert st.macro_recall == pytest.approx((2 / 3 + 0.5 + 0.5 + 0) / 4)
+    # 適合率: 喜びと予測した 2 件は両方正解。恐れと予測した件は 0 件 (nan)
+    assert rec["happy"].pred_n == 2 and rec["happy"].precision == pytest.approx(1.0)
+    assert rec["sad"].precision == pytest.approx(1.0) and math.isnan(rec["fearful"].precision)
     assert "驚き" in rec["fearful"].top_wrong and "平常" in rec["happy"].top_wrong
     # 平常・不明・タグなしの割合 (pyVideoTrans 流に読み替えると 平常 = NEUTRAL + EMO_UNKNOWN + タグなし)
     assert st.neutral_rate == pytest.approx(1 / 8) and st.unknown_rate == pytest.approx(1 / 8) and st.notag_rate == pytest.approx(1 / 8)
@@ -139,3 +142,22 @@ def test_speed_excludes_failed():
     run.durations["c"] = 100.0
     sp = analysis.speed(run)
     assert sp["n"] == 2 and sp["rtf"] == pytest.approx(0.25) and sp["sec_per_clip"] == pytest.approx(1.0)
+
+
+def test_cer_tables_skip_runs_that_do_not_report_cer():
+    clips = [clip("a", "happy", "あいう")]
+    sv = make_run({"a": ("あいう", "HAPPY")}, "sensevoice", "SV")
+    ban = make_run({"a": ("あいう", "SAD")}, "sensevoice_nounk", "SV禁止")
+    ban.report_cer = False
+    tables = analysis.cer_tables(clips, [sv, ban], OPTS)
+    assert [t.model for t in tables] == ["SV"]
+    # 感情の集計は両方できる
+    assert analysis.emotion_stats(clips, sv).accuracy == 1.0 and analysis.emotion_stats(clips, ban).accuracy == 0.0
+
+
+def test_precision_exposes_a_model_that_answers_angry_for_everything():
+    clips = [clip(f"a{i}", "angry") for i in range(4)] + [clip(f"s{i}", "sad") for i in range(4)] + [clip(f"h{i}", "happy") for i in range(2)]
+    run = make_run({c.file: ("", "ANGRY") for c in clips})
+    rows = {r.label: r for r in analysis.emotion_stats(clips, run).per_emotion}
+    assert rows["angry"].recall == 1.0 and rows["angry"].precision == pytest.approx(0.4)      # 再現率は 100% でも、適合率は 4/10
+    assert rows["sad"].recall == 0 and rows["happy"].recall == 0

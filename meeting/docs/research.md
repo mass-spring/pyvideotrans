@@ -712,3 +712,27 @@ E4 の実装時の調査（サブエージェント sonnet）。**太字は公�
 - 未確認（本物の AWS と GPU が必要）：IAM ポリシーが十分か、DLAMI の中身（Python・SSM エージェント）、自動停止の予約の確認方法、4エンジンの導入と合成、T4 での速度。
 
 出典：[DLAMI Base GPU Ubuntu 22.04](https://docs.aws.amazon.com/dlami/latest/devguide/aws-deep-learning-x86-base-gpu-ami-ubuntu-22-04.html) / [DLAMI の ID の探し方](https://docs.aws.amazon.com/dlami/latest/devguide/find-dlami-id.html) / [EC2 の vCPU 枠](https://docs.aws.amazon.com/ec2/latest/instancetypes/ec2-instance-quotas.html) / [スポットの枠](https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/using-spot-limits.html)
+
+---
+
+## 21. 感情の読み取り精度と日本語 CER の現状値（emocheck・JVNV）（2026-10-19 追記）
+
+`meeting/src/emocheck` を作成し（サブエージェント sonnet、要点は opus が1件ごとの生データで再確認）、公開の日本語感情音声 **JVNV**（4話者・6感情・平常なし、CC BY-SA 4.0、非言語音声を除いた版）全1615件で測った。結果は `meeting/outputs/jvnv_emotion_asr.xlsx`（Git 対象外）。
+
+**感情タグ（SenseVoiceSmall）**
+- **pyVideoTrans と同じ使い方（言語 auto・use_itn・VAD なし）では、97.6%（1576/1615）が `EMO_UNKNOWN`。6感情の正解率 1.1%**（95%区間 0.7〜1.8%）。NEUTRAL は0件。pyVideoTrans の `map_sensevoice_tag` は不明を平常に読み替えるので、**今の作りでは感情モジュールにほとんど感情の信号が入らない**。
+  - `language=ja`（120件）、音声の渡し方（パス／16kHz配列）、`use_itn=False` を変えても同じ。付属の ja.mp3 は NEUTRAL になるので、タグの取り出し自体は正しい。
+- `ban_emo_unk=True`（EMO_UNKNOWN を出させない、funasr 1.4.16 のソースで確認・公式 README では未確認 (要検証)）では **31.1%**（95%区間 28.9〜33.4%）。ただし予測の63%が「怒り」に偏る（怒りの再現率 99.6%・適合率 24.4%）。嫌悪は一度も出ない。喜び・怒り・悲しみだけで見ると 53.4%（怒りへの偏りで水増し）。
+- PLAN の KPI（平常・喜び・怒り・悲しみの4分類で70%）は、JVNV に平常がないため**未測定**。平常を含む公開データか、同意を得た模擬会議で測る必要がある。
+- JVNV は演技の朗読で4人が同じ文を読むため、文面が手がかりになりうる。会議音声での精度はこれと違う可能性がある。
+- 示唆：音声からの感情は SenseVoice のタグだけでは足りない。**emotion2vec+（法務確認待ち：Q5）を同じ道具で測って比べる**、文章からの判定（LLM）と組み合わせる、の2つが次の候補。
+
+**日本語 CER（pyVideoTrans 流の正規化つき）**
+- SenseVoiceSmall：**2.49%**（全1615件、正解 53,765 文字）。感情別は喜び 1.4%〜嫌悪 3.6%。
+- faster-whisper small（ディスク不足で large-v3-turbo は未実施）：6.5%（240件の層別抽出）。同じ240件で SenseVoice は 2.7%。
+- 朗読音声なので、会議（雑音・重なり・言いよどみ）の CER はこれより悪くなる見込み。
+
+**速さ（他の処理と同時の CPU 4コア、参考値）**：SenseVoice 1スレッドで RTF 0.117（1件 0.9秒）、Whisper small 2スレッドで RTF 0.77。
+- funasr は `AutoModel` に `ncpu` を渡さないと torch のスレッド数を4に上書きし、他の処理と同時だと極端に遅くなる（1件30秒以上）。pyVideoTrans 側も同じ影響を受けるかは (要検証)。
+
+出典：[JVNV コーパス](https://sites.google.com/site/shinnosuketakamichi/research-topics/jvnv_corpus) / [非言語音声を除いた版（HF）](https://huggingface.co/datasets/litagin/jvnv_corpus_v1_no_nv) / [SenseVoice](https://github.com/FunAudioLLM/SenseVoice) / [FunASR](https://github.com/modelscope/FunASR) / [faster-whisper](https://github.com/SYSTRAN/faster-whisper)
