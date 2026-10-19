@@ -275,9 +275,9 @@ def _run_engine(cfg, spec, todo, out, manifest, dry_run, log) -> None:
                 msg = str(e) if isinstance(e, EngineError) else f"{type(e).__name__}: {str(e)[:300]}"
                 row.update(status=STATUS_FAILED, error=msg, gen_seconds=f"{time.time() - t1:.2f}")
             done += 1
+            write_manifest(out, manifest)   # 1件ごとに保存（CPU や Colab で途中で止まっても、できた分は次回に引き継ぐ）
             if done % 10 == 0 or done == len(todo):
                 log(f"[{spec}] {done}/{len(todo)} 件（失敗 {sum(1 for x in todo if manifest[x.job_id]['status'] == STATUS_FAILED)}）")
-                write_manifest(out, manifest)
     finally:
         engine.close()
         free_gpu()
