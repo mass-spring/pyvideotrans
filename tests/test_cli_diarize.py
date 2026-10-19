@@ -38,6 +38,7 @@ class TestParser:
         assert args.nums_diariz == 0
         assert args.num_speakers is None
         assert args.speaker_type is None
+        assert args.voice_profile_dir is None
 
     def test_diarize_is_alias_of_enable_diariz(self, tmp_path):
         _, a = parse(tmp_path, "--diarize")
@@ -53,10 +54,10 @@ class TestParser:
         assert args.num_speakers == 4 and args.speaker_type == "pyannote"
 
     def test_speaker_type_choices_match_gui_settings(self):
-        assert SPEAKER_TYPES == ["built", "ali_CAM", "pyannote"]
+        assert SPEAKER_TYPES == ["built", "ali_CAM", "pyannote", "enrolled"]
         # the GUI's advanced settings offer the same list
         text = Path(__file__).resolve().parents[1].joinpath("videotrans/ui/advset_keys.py").read_text(encoding="utf-8")
-        assert "'speaker_type': ['built', 'ali_CAM', 'pyannote']" in text.replace('"', "'")
+        assert "'speaker_type': ['built', 'ali_CAM', 'pyannote', 'enrolled']" in text.replace('"', "'")
 
     def test_speaker_type_invalid_choice(self, tmp_path):
         with pytest.raises(SystemExit):
@@ -65,7 +66,7 @@ class TestParser:
     def test_new_text_db_entries_are_bilingual_and_consistent(self):
         for key in ("help_num_speakers", "help_speaker_type", "err_num_speakers_neg", "err_num_speakers_conflict",
                     "err_diariz_hf_token", "warn_num_speakers_one", "warn_speaker_type_ignored",
-                    "warn_vtv_diariz_needs_dubbing"):
+                    "warn_vtv_diariz_needs_dubbing", "help_voice_profile_dir", "err_enrolled_profiles"):
             assert key in TEXT_DB and "zh" in TEXT_DB[key] and "en" in TEXT_DB[key]
             assert TEXT_DB[key]["zh"].count("{}") == TEXT_DB[key]["en"].count("{}")
 
@@ -127,6 +128,50 @@ class TestResolveDiarizArgs:
         for st in ("built", "ali_CAM"):
             parser, args = parse(tmp_path, "--diarize", "--speaker-type", st)
             resolve_diariz_args(args, parser, hf_token="")
+
+    @staticmethod
+    def _profile_dir(root):
+        folder = root / "profiles" / "Aさん"
+        (folder / "refs").mkdir(parents=True)
+        (folder / "refs" / "a.wav").write_bytes(b"RIFF")
+        (folder / "profile.json").write_text('{"refs": [{"wav": "refs/a.wav"}]}', encoding="utf-8")
+        return str(root / "profiles")
+
+    def test_enrolled_without_profiles_fails_loudly_in_japanese(self, tmp_path, capsys):
+        parser, args = parse(tmp_path, "--diarize", "--speaker-type", "enrolled")
+        with pytest.raises(SystemExit) as e:
+            resolve_diariz_args(args, parser, voice_profile_dir="")
+        assert e.value.code == 2
+        err = capsys.readouterr().err
+        assert "--speaker-type enrolled" in err and "声の登録フォルダが指定されていません" in err
+
+    def test_enrolled_from_settings_default_also_needs_profiles(self, tmp_path):
+        parser, args = parse(tmp_path, "--diarize")
+        with pytest.raises(SystemExit):
+            resolve_diariz_args(args, parser, default_speaker_type="enrolled", voice_profile_dir=str(tmp_path / "missing"))
+
+    def test_enrolled_folder_without_any_profile(self, tmp_path, capsys):
+        parser, args = parse(tmp_path, "--diarize", "--speaker-type", "enrolled", "--voice-profile-dir", str(tmp_path))
+        with pytest.raises(SystemExit):
+            resolve_diariz_args(args, parser)
+        assert "1人も見つかりません" in capsys.readouterr().err
+
+    def test_enrolled_with_profiles_from_settings_or_option_is_fine(self, tmp_path):
+        d = self._profile_dir(tmp_path)
+        parser, args = parse(tmp_path, "--diarize", "--speaker-type", "enrolled")
+        resolve_diariz_args(args, parser, voice_profile_dir=d)  # cfg.json value
+        parser, args = parse(tmp_path, "--diarize", "--speaker-type", "enrolled", "--voice-profile-dir", d)
+        resolve_diariz_args(args, parser, voice_profile_dir="")  # option wins over an empty setting
+        assert args.enable_diariz is True
+
+    def test_enrolled_not_checked_when_diarization_is_off(self, tmp_path):
+        parser, args = parse(tmp_path, "--speaker-type", "enrolled")
+        resolve_diariz_args(args, parser, voice_profile_dir="")  # only the note, no error
+
+    def test_enrolled_needs_no_hf_token(self, tmp_path):
+        d = self._profile_dir(tmp_path)
+        parser, args = parse(tmp_path, "--diarize", "--speaker-type", "enrolled")
+        resolve_diariz_args(args, parser, hf_token="", voice_profile_dir=d)
 
     def test_token_not_checked_when_diarization_is_off(self, tmp_path):
         parser, args = parse(tmp_path, "--speaker-type", "pyannote")
@@ -316,6 +361,30 @@ class TestMainWiring:
         env.monkeypatch.setattr(cli, "stt_fun", boom)
         assert self.run(env, "--task", "stt", "--name", env.file, "--diarize", "--speaker-type", "ali_CAM") == 1
         assert env.config.settings.speaker_type == "built"
+
+    def test_voice_profile_dir_option_applies_to_this_run_only(self, env, tmp_path):
+        config = env.config
+        env.monkeypatch.setattr(config.settings, "voice_profile_dir", "/original", raising=False)
+        d = tmp_path / "profiles" / "Aさん"
+        (d / "refs").mkdir(parents=True)
+        (d / "refs" / "a.wav").write_bytes(b"RIFF")
+        (d / "profile.json").write_text('{"refs": [{"wav": "refs/a.wav"}]}', encoding="utf-8")
+        seen = {}
+        env.monkeypatch.setattr(cli, "stt_fun", lambda params: seen.update(profile_dir=config.settings.voice_profile_dir,
+                                                                           speaker_type=config.settings.speaker_type))
+        assert self.run(env, "--task", "stt", "--name", env.file, "--diarize", "--speaker-type", "enrolled",
+                        "--voice-profile-dir", str(tmp_path / "profiles")) == 0
+        assert seen["speaker_type"] == "enrolled"
+        assert Path(seen["profile_dir"]) == tmp_path / "profiles"        # applied while the task runs ...
+        assert config.settings.voice_profile_dir == "/original"          # ... and restored afterwards (never saved)
+        assert config.settings.speaker_type == "built"
+
+    def test_enrolled_without_profiles_exits_with_usage_error(self, env):
+        env.monkeypatch.setattr(env.config.settings, "voice_profile_dir", "", raising=False)
+        with pytest.raises(SystemExit) as e:
+            self.run(env, "--task", "stt", "--name", env.file, "--diarize", "--speaker-type", "enrolled")
+        assert e.value.code == 2
+        assert "task" not in env.seen          # the task never started
 
     def test_vtv_gets_diarization_params(self, env):
         assert self.run(env, "--task", "vtv", "--name", env.file, "--source_language_code", "ja", "--target_language_code", "en",

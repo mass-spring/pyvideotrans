@@ -24,7 +24,7 @@ ComboBox_Data = {
     "fps_mode": ["vfr", "cfr"],
     "llm_ai_type": [it['name'] for it in LLM_CONCERT_DICT],
     "vad_type": ['tenvad', 'silero'],
-    "speaker_type": ['built', 'ali_CAM', 'pyannote'],
+    "speaker_type": ['built', 'ali_CAM', 'pyannote', 'enrolled'],
     "video_codec": ['264', '265'],
     "preset": ['ultrafast', 'superfast', 'veryfast', 'faster', 'fast', 'medium', 'slow', 'slower',
                'veryslow'],

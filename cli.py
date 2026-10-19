@@ -116,6 +116,11 @@ TEXT_DB: Dict[str, Dict[str, str]] = {
         "zh": "说话人分离模型, 仅本次运行有效, 不写入 cfg.json (默认使用软件设置中的值)",
         "en": "Diarization model for this run only, not saved to cfg.json (default: the value in the settings)"
     },
+    "help_voice_profile_dir": {
+        "zh": "已登记声音的文件夹 (含 <姓名>/profile.json), 仅本次运行有效, 不写入 cfg.json. --speaker-type enrolled 时必需",
+        "en": "Folder of enrolled voices (<name>/profile.json), for this run only, not saved to cfg.json. Required by --speaker-type enrolled",
+        "ja": "登録した声のフォルダ（<名前>/profile.json が入ったもの）。今回の実行だけ有効で cfg.json には保存しない。--speaker-type enrolled で必須",
+    },
     "help_rephrase":       {"zh": "重新断句 (0=默认, 1=LLM断句)", "en": "Rephrase (0=default, 1=LLM)"},
     "help_fix_punc":       {"zh": "恢复标点符号", "en": "Restore punctuation"},
 
@@ -186,6 +191,11 @@ TEXT_DB: Dict[str, Dict[str, str]] = {
     "warn_speaker_type_ignored": {
         "zh": "[提示] --speaker-type 仅在启用说话人识别时有效 (--diarize)",
         "en": "[Note] --speaker-type has no effect without --diarize"
+    },
+    "err_enrolled_profiles": {
+        "zh": "--speaker-type enrolled 需要已登记的声音: {}",
+        "en": "--speaker-type enrolled needs enrolled voices (--voice-profile-dir or voice_profile_dir in cfg.json): {}",
+        "ja": "--speaker-type enrolled には登録した声が必要です（--voice-profile-dir、または cfg.json の voice_profile_dir）: {}",
     },
     "warn_vtv_diariz_needs_dubbing": {
         "zh": "[提示] vtv 仅在配音 (--voice_role) 时才会识别说话人; 只需要文字和说话人请用 --task stt",
@@ -352,7 +362,7 @@ def list_models() -> None:
 
 
 # Same choices as the GUI's "speaker_type" setting (videotrans/ui/advset_keys.py)
-SPEAKER_TYPES = ['built', 'ali_CAM', 'pyannote']
+SPEAKER_TYPES = ['built', 'ali_CAM', 'pyannote', 'enrolled']
 
 
 # ---------------------------------------------------------------------------
@@ -395,6 +405,7 @@ def build_parser() -> argparse.ArgumentParser:
     stt_group.add_argument('--num-speakers', type=int, default=None, metavar='N', help=tr("help_num_speakers"))
     stt_group.add_argument('--speaker-type', type=str, default=None, choices=SPEAKER_TYPES,
                            help=tr("help_speaker_type"))
+    stt_group.add_argument('--voice-profile-dir', type=str, default=None, metavar='DIR', help=tr("help_voice_profile_dir"))
     stt_group.add_argument('--rephrase', type=int, default=0, help=tr("help_rephrase"))
     stt_group.add_argument('--fix_punc', action='store_true', help=tr("help_fix_punc"))
 
@@ -454,7 +465,7 @@ def validate_task_params(args: argparse.Namespace, parser: argparse.ArgumentPars
 
 
 def resolve_diariz_args(args: argparse.Namespace, parser: argparse.ArgumentParser,
-                        hf_token: str = '', default_speaker_type: str = 'built') -> None:
+                        hf_token: str = '', default_speaker_type: str = 'built', voice_profile_dir: str = '') -> None:
     """Resolve the diarization options (--diarize / --num-speakers / --speaker-type) in place.
 
     --num-speakers N is the real number of speakers; it is converted to the GUI-style
@@ -485,6 +496,12 @@ def resolve_diariz_args(args: argparse.Namespace, parser: argparse.ArgumentParse
     if (speaker_type or default_speaker_type) in ('pyannote', 'reverb') and not hf_token:
         # Upstream only logs an error and silently skips diarization; a headless run should fail loudly.
         parser.error(tr("err_diariz_hf_token", speaker_type or default_speaker_type))
+    if (speaker_type or default_speaker_type) == 'enrolled':
+        # enrolled names each line after the closest enrolled voice: fail early (in Japanese) when there is none
+        from videotrans.process._enrolled_speakers import profile_dir_problem
+        problem = profile_dir_problem(getattr(args, 'voice_profile_dir', None) or voice_profile_dir)
+        if problem:
+            parser.error(tr("err_enrolled_profiles", problem))
     if args.task == 'vtv' and not args.voice_role:
         print(tr("warn_vtv_diariz_needs_dubbing"), file=sys.stderr)
 
@@ -631,7 +648,8 @@ def main() -> int:
 
     # Validate parameters
     validate_task_params(args, parser)
-    resolve_diariz_args(args, parser, settings.get('hf_token', ''), settings.get('speaker_type', 'built'))
+    resolve_diariz_args(args, parser, settings.get('hf_token', ''), settings.get('speaker_type', 'built'),
+                        settings.get('voice_profile_dir', ''))
 
     # Set runtime flags
     app_cfg.exit_soft = False
@@ -656,6 +674,10 @@ def main() -> int:
     prev_speaker_type = settings.get('speaker_type', 'built')
     if args.speaker_type:
         settings['speaker_type'] = args.speaker_type
+    # --voice-profile-dir: same (this run only; also used as the clone reference folder)
+    prev_profile_dir = settings.get('voice_profile_dir', '')
+    if args.voice_profile_dir:
+        settings['voice_profile_dir'] = Path(args.voice_profile_dir).absolute().as_posix()
 
     try:
         task_map[args.task]()
@@ -671,6 +693,7 @@ def main() -> int:
         return 1
     finally:
         settings['speaker_type'] = prev_speaker_type
+        settings['voice_profile_dir'] = prev_profile_dir
 
 
 if __name__ == "__main__":

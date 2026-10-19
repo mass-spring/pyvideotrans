@@ -216,6 +216,11 @@ class AppSettings:
             "clone_ref_mode": "",
             # sampling rate (Hz) of clone references cut per line from the source audio (upstream: 16000)
             "clone_ref_sample_rate": 44100,
+            # --- speaker_type "enrolled": name each subtitle line after the closest enrolled speaker in voice_profile_dir
+            # (docs/meeting_enrolled_speakers_ja.md). enrolled_speaker_model: titanet | eres2net (onnx files in models/onnx/)
+            # enrolled_min_sim: "" = off; e.g. "0.35" = a line whose best cosine similarity is below it is labelled "unknown"
+            "enrolled_speaker_model": "titanet",
+            "enrolled_min_sim": "",
             # --- emotion in TTS (docs/meeting_emotion_tts_ja.md); only while enable_emotion is on ---
             # emotion_tts: apply each line's emotion to the voice (VoxCPM2 control instruction / ChatterBox exaggeration); False = ignore emotion in TTS
             "emotion_tts": True,

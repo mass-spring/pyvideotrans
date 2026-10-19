@@ -1136,7 +1136,7 @@
     "max_speech_duration_s2_notice": "二次识别最长语音持续时长(秒),限制单个语音片段的最大长度。超过此时长时强制分割。填写数字，单位是秒",
     "min_speech_duration_ms2_notice": "二次识别最短语音持续时长(毫秒)，如果某条字幕时长小于该ms，则尝试将该字幕合并进相邻字幕中，单位是毫秒",
     "model_for_recogn2_notice": "二次识别所用模型(固定使用faster-whisper渠道)",
-    "speaker_type_notice": "用于说话人分离的模型，默认内置模型支持中英. \n若选 pyannote 必须拥有 https://huggingface.co 上的token，\n并且同意pyannote组织的授权协议\n\n具体请访问URL查看教程:\nhttps://pvt9.com/shuohuaren",
+    "speaker_type_notice": "用于说话人分离的模型，默认内置模型支持中英. \n若选 pyannote 必须拥有 https://huggingface.co 上的token，\n并且同意pyannote组织的授权协议\n\n具体请访问URL查看教程:\nhttps://pvt9.com/shuohuaren \nenrolled: 与 cfg.json 中 voice_profile_dir 文件夹里已登记的声音比对, 给每行字幕标上最接近的人名(见 docs/meeting_enrolled_speakers_ja.md)",
     "hf_token_notice": "填写你在 huggingface.co 的token，否则无法使用 pyannote，具体查看教程\nhttps://pvt9.com/shuohuaren",
     "cuda_com_type_notice": "faster模式时计算数据类型，int8=消耗资源少，速度快，精度低，float32=消耗资源多，速度慢，精度高，float16适合GPU加速。default默认自选",
     "beam_size_notice": "字幕识别时精度调整，1-5，1=消耗显存最低，5=消耗显存最多",

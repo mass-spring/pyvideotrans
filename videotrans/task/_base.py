@@ -193,6 +193,15 @@ class BaseTask(BaseCon):
                 from videotrans.process.prepare_audio import cam_speakers as _run_speakers
             elif speaker_type in ['pyannote','reverb']:
                 from videotrans.process.prepare_audio import pyannote_speakers as _run_speakers
+            elif speaker_type == 'enrolled':
+                # 登録した声(voice_profile_dir)との照合で話者名を付ける。docs/meeting_enrolled_speakers_ja.md
+                from videotrans.process._enrolled_speakers import enrolled_speakers as _run_speakers, enrolled_kwargs
+                try:
+                    kw.update(enrolled_kwargs(settings))
+                except (ValueError, OSError) as e:
+                    logger.error(f'[enrolled] {e}')
+                    self.signal(text=str(e))
+                    return
             else:
                 logger.error(f'当前所选说话人分离模型不支持:{speaker_type=}')
                 return
@@ -221,11 +230,14 @@ class BaseTask(BaseCon):
                     hf_token)
 
             _rs = self._new_process(callback=_run_speakers, title=title,
-                                         is_cuda=self.cfg.is_cuda and speaker_type != 'built', kwargs=kw)
+                                         is_cuda=self.cfg.is_cuda and speaker_type not in ('built', 'enrolled'), kwargs=kw)
 
             if _rs:
                 logger.debug('分离说话人成功完成')
                 shutil.copy2(self.cfg.cache_folder + "/speaker.json", self.cfg.target_dir + "/speaker.json")
+                if speaker_type == 'enrolled':  # 要確認の行の一覧(speaker_diag.json/csv)も出力フォルダへ
+                    from videotrans.process._enrolled_speakers import copy_review_files
+                    copy_review_files(self.cfg.cache_folder, self.cfg.target_dir)
             else:
                 logger.error('分离失败说话人失败')
             self.signal(text=tr('separating speakers end'))
