@@ -28,10 +28,22 @@ uv run voicecheck calibrate --enroll-dir 登録音声のフォルダ --out calib
 uv run voicecheck compare --pairs pairs.csv --calib calib.xlsx --out report.xlsx
 ```
 
+## 今わかっていること（2026-10-19、公開データで測定。詳しくは docs/research.md 21〜25章）
+
+| 項目 | 今の pyVideoTrans | 改造後 | 目標 |
+|---|---|---|---|
+| 日本語の文字起こし（文字の誤り） | 2.5〜4.6%（SenseVoice） | — | 8% 以下 |
+| 誰が話したか（話者正解率） | 50% | **約94%**（登録した声と照合、`speaker_type=enrolled`） | 95% 以上 |
+| 感情の読み取り（4分類） | 9%（SenseVoice） | **77%**（emotion2vec+、`emotion_backend=emotion2vec`） | 70% 以上 |
+| 本人らしさ（SIM、本人どうし 0.75） | 0.46 | **0.61〜0.63**（登録の手本） | 測ってから決める |
+
+結果の Excel と聞き比べの音声は `outputs/`（Git には入れない）。
+
 ## 次にやること（ユーザー向け）
 
-1. **声を登録する（約3分）**：`enroll/script_ja.md` のとおりに、静かな部屋で 48kHz・WAV で録音する（ノイズ除去はオフ）。
-2. **Colab で現状値を測る**：`notebooks/voice_baseline_colab.ipynb` を Google Colab で開き（GPU を選ぶ）、上から順に実行する。
-   録音を登録 → 改造前の条件（C0）と改造後の条件（C1〜C3）で合成 → 声の似かたを Excel で比べる。
-   **Colab に上げてよいのは、自分の声・同意を得た模擬会議・公開データだけ。**
-3. **模擬会議を録る（優先1用）**：同意を得た3〜4人で10〜15分。正解の書き起こしを作り、`src/asrcheck` で文字起こしの精度を測る。
+ここまでの測定・改造は、この開発環境で全部動かしました。**ユーザーにしかできないこと**は次の4つです。
+
+1. **声を登録する（約3分）**：`enroll/script_ja.md` を、静かな部屋で**落ち着いた普通の声**で読み、48kHz・WAV で録音する（ノイズ除去はオフ）。手本の声の調子が合成した声に移るため、普通の声で読むのが大事。
+2. **模擬会議を録る**：同意を得た3〜4人で10〜15分（全員、1. の登録もする）。話者の照合と感情の精度を、実際の録音で測り直すため。
+3. **社内の確認**：私物の Mac で会社の会議音声を処理してよいか（Q4）、FunASR モデルライセンス（SenseVoice・emotion2vec+）の「参考と学習の目的のみで提供」の解釈（Q5）。
+4. （任意）GPU を使いたいとき：Colab（`notebooks/voice_baseline_colab.ipynb`）か、AWS の鍵の登録（`cloud/aws/README.md`、Q13）。CPU でも動くが遅い。
