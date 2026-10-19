@@ -211,7 +211,7 @@ def test_environment_commands_match_the_notebook_pins(env):
             "speechbrain==1.0.3") in exact(r, "pip install")
     assert f"{uv} pip install --python {w}/envs/score/bin/python setuptools<81 pyworld" in exact(r, "pip install")
     assert f"{uv} venv --python 3.11 {w}/envs/chatterbox" in exact(r, " venv ")
-    assert f"{uv} pip install --python {w}/envs/chatterbox/bin/python chatterbox-tts==0.1.7 soundfile scipy" in exact(r, "pip install")
+    assert f"{uv} pip install --python {w}/envs/chatterbox/bin/python chatterbox-tts==0.1.7 soundfile scipy setuptools<81" in exact(r, "pip install")
     assert (f"{uv} pip install --python {w}/envs/voxcpm2/bin/python torch==2.6.0 torchaudio==2.6.0 voxcpm==2.0.3 numpy soundfile scipy librosa"
             in exact(r, "pip install"))
     assert any("astral.sh/uv/0.11.32/install.sh" in t and "UV_UNMANAGED_INSTALL" in t for t in exact(r, "install.sh"))

@@ -48,8 +48,10 @@ class Qwen3TTSEngine(Engine):
             raise EngineError(f"qwen-tts が入っていません（{e}）。Colab: pip install qwen-tts==0.1.1") from e
         dtype_opt = str(self.opt("dtype", "auto"))
         if dtype_opt == "auto":
-            cap = torch.cuda.get_device_capability()[0] if torch.cuda.is_available() else 0
-            dtype = torch.bfloat16 if cap >= 8 else torch.float16
+            if torch.cuda.is_available():
+                dtype = torch.bfloat16 if torch.cuda.get_device_capability()[0] >= 8 else torch.float16
+            else:
+                dtype = torch.float32   # CPU で float16 は遅い・未対応の演算がある
         else:
             dtype = {"bfloat16": torch.bfloat16, "float16": torch.float16, "float32": torch.float32}[dtype_opt]
         attn = str(self.opt("attn_implementation", "auto"))

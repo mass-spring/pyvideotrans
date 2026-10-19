@@ -80,9 +80,11 @@ ENGINE_GROUPS: dict[str, EngineGroup] = {
                 check_import="qwen_tts"),
         ["qwen3tts"]),
     # chatterbox-tts 0.1.7 は torch==2.6.0 / transformers==5.2.0 / numpy<2 を固定で要求する
+    # 透かし部品 resemble-perth が pkg_resources を使うので setuptools<81 も入れる（無いと読み込みで TypeError）
     "chatterbox": EngineGroup(
         "chatterbox",
-        EnvSpec("chatterbox", "3.11", ["chatterbox-tts==0.1.7", "soundfile", "scipy"], check_import="chatterbox.mtl_tts"),
+        EnvSpec("chatterbox", "3.11", ["chatterbox-tts==0.1.7", "soundfile", "scipy", "setuptools<81"],
+                check_import="chatterbox.mtl_tts"),
         ["chatterbox"]),
     # CosyVoice3: pip では入らないので、公式リポジトリをクローンして requirements.txt を入れる（公式は Python 3.10）。
     # 推論に要らない重い部品は除く。いちばん壊れやすい（Colab でも未確認）
