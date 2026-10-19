@@ -270,12 +270,12 @@ def reject_curve(best: np.ndarray, correct: np.ndarray, thresholds: Iterable[flo
 # ---------------------------------------------------------------------------
 def pool_continuous(seg_embs: np.ndarray, starts_ms: Sequence[int], ends_ms: Sequence[int], max_gap_ms: int = 150,
                     max_group: int = 3) -> list[list[int]]:
-    """隙間が max_gap_ms 以下でつながっている区間（VAD が最長秒数で切った同じ発言の続き）を最大 max_group 個まで 1 グループにする。
+    """隙間が 0〜max_gap_ms でつながっている区間（VAD が最長秒数で切った同じ発言の続きかもしれない区間。重なっている区間は対象外）を最大 max_group 個まで 1 グループにする。
     戻り値: グループごとの区間番号のリスト（入力の並び順）。"""
     order = sorted(range(len(starts_ms)), key=lambda i: (starts_ms[i], ends_ms[i]))
     groups: list[list[int]] = []
     for i in order:
-        if groups and len(groups[-1]) < max_group and starts_ms[i] - ends_ms[groups[-1][-1]] <= max_gap_ms:
+        if groups and len(groups[-1]) < max_group and 0 <= starts_ms[i] - ends_ms[groups[-1][-1]] <= max_gap_ms:
             groups[-1].append(i)
         else:
             groups.append([i])
@@ -304,9 +304,9 @@ def smooth_short(labels: Sequence[str], sim: np.ndarray, starts_ms: Sequence[int
         if (ends_ms[i] - starts_ms[i]) / 1000.0 >= min_sec:
             continue
         cands = []
-        if i > 0 and starts_ms[i] - ends_ms[i - 1] <= max_gap_ms:
+        if i > 0 and 0 <= starts_ms[i] - ends_ms[i - 1] <= max_gap_ms:
             cands.append(i - 1)
-        if i + 1 < n and starts_ms[i + 1] - ends_ms[i] <= max_gap_ms:
+        if i + 1 < n and 0 <= starts_ms[i + 1] - ends_ms[i] <= max_gap_ms:
             cands.append(i + 1)
         if cands:
             best = max(cands, key=lambda j: sim[i, idx[labels[j]]] if labels[j] in idx else -1.0)

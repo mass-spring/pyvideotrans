@@ -135,7 +135,9 @@ def _times(lay: Layout, v: str, seg: str, cfg: str, n: str, audio_s: float) -> d
     return t
 
 
-def score_variant(lay: Layout, v: str, kpis: dict[str, Kpi] | None = None, opts: EvalOptions | None = None) -> list[Cond]:
+def score_variant(lay: Layout, v: str, kpis: dict[str, Kpi] | None = None, opts: EvalOptions | None = None,
+                  only: set[str] | None = None) -> list[Cond]:
+    """only: 条件のフォルダ名（例 'silero__built-zh__n4'）を指定すると、その条件だけ採点する（None なら全部）。"""
     kpis = kpis or DEFAULT_KPIS
     opts = opts or default_opts()
     ref_by, names, _notes, _enc, durs = load_reference(str(lay.ref(v)), [str(lay.wav(v))])
@@ -144,6 +146,8 @@ def score_variant(lay: Layout, v: str, kpis: dict[str, Kpi] | None = None, opts:
     audio_s = next(iter(durs.values()))
     conds: list[Cond] = []
     for cd in sorted((lay.runs(v) / "cond").glob("*__*__*")):
+        if only is not None and cd.name not in only:
+            continue
         seg, cfg, n = cd.name.split("__")
         t = _times(lay, v, seg, cfg, n, audio_s)
         name = f"{v}:{seg}/{cfg}/{n}"

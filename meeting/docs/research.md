@@ -770,3 +770,24 @@ E4 の実装時の調査（サブエージェント sonnet）。**太字は公�
 - (要検証)：内蔵 onnx 3点（再配布元 himyworld/videotrans）の元モデルのライセンス（NeMo titanet small、3D-Speaker ERes2Net）。
 
 出典：[JVNV](https://sites.google.com/site/shinnosuketakamichi/research-topics/jvnv_corpus)（arXiv:2310.06072） / [sherpa-onnx speaker diarization](https://k2-fsa.github.io/sherpa/onnx/speaker-diarization/index.html) / [3D-Speaker](https://github.com/modelscope/3D-Speaker) / [pyannote community-1](https://huggingface.co/pyannote/speaker-diarization-community-1)
+
+---
+
+## 23. 声の再現の現状値（V2、voicelab、CPU・公開データ）（2026-10-19 追記、途中）
+
+この開発環境の CPU で `meeting/data/voicelab/exp_cpu01/exp.json` を実行（D16）。話者は JVNV の F1（女性）・M1（男性）と LibriSpeech 1272（英語・男性）、quick 設定（4言語×会議の文1つ、繰り返し1回）。評価は ECAPA のコサイン類似度（SIM）、基準は手本に使っていない本人の実声8本。結果は `meeting/data/voicelab/exp_cpu01/result/voicelab_result.xlsx`、聞き比べ用は `meeting/outputs/listen_chatterbox/`（Git 対象外）。
+
+**Chatterbox Multilingual 0.1.7（24件、CPU で約33分）**
+
+| 条件 | ja | en | fr | zh | 全言語 |
+|---|---|---|---|---|---|
+| 本人の実声どうし（上限の目安） | — | — | — | — | 0.752 |
+| C0 今の方式（その場の1行 約4秒・16kHz を手本） | 0.534 | 0.400 | 0.444 | 0.449 | **0.457** |
+| C1 登録の手本（約12秒・48kHz・書き起こし付き） | 0.657 | 0.620 | 0.608 | 0.640 | **0.631** |
+| C2 C1 を 1.3倍に早回し | 0.480 | 0.512 | 0.451 | 0.569 | 0.503 |
+| C2 C1 を 2倍に早回し | 0.359 | 0.449 | 0.375 | 0.464 | 0.412 |
+
+- **手本を替えるだけで +0.17**（C1−C0、全言語）。**早回しで −0.13（1.3倍）、−0.22（2倍）**。仮説1（手本が悪い）と仮説6（早回しで声が変わる）を、公開データで数字として確認。
+- 日本語の話者（F1・M1）が英語を話すと、C0 は 0.35〜0.37、C1 は 0.55〜0.59。言語をまたぐと下がる（仮説4）。
+- 注意：1条件1回・3人だけなので揺れが大きい（条件内の標準偏差 約0.1）。本人の実声どうしの値は感情のある演技の録音で、平常の声とは違いうる。ECAPA の「同じ人」のしきい値（LibriSpeech で 0.323）は JVNV では未較正。
+- CPU 上の注意：Chatterbox は読み込みに約40秒、1件あたり約80秒。他の重い処理と同時だとメモリ不足で強制終了された（メモリ約14GB）。Qwen3-TTS は CPU で float32 だと 1.7B で約8GB 使う → bfloat16 で実行。
