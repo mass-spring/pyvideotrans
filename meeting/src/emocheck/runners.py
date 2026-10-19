@@ -109,6 +109,7 @@ class ModelRun:
     load_sec: float = 0.0
     n_cached: int = 0      # 前回までの結果を再利用した件数
     n_errors: int = 0
+    meta: dict[str, Any] = field(default_factory=dict)    # 最後にモデルを読み込んだ実行の記録 (読み込み秒・メモリ・日時。途中結果の隣の .meta.json)
 
     @property
     def has_scores(self) -> bool:
@@ -178,8 +179,9 @@ class SenseVoiceRecognizer:
             ("ライブラリ", f"funasr {_version('funasr')} / torch {_version('torch')}"),
             ("設定", f"language={self.language} / use_itn=True / VAD なし / {self.device} / 1本ずつ処理"
                     + (" / ban_emo_unk=True（EMO_UNKNOWN を禁止。pyVideoTrans の今の使い方とは違う設定）" if self.ban_unk else " / ban_emo_unk なし（pyVideoTrans の今の使い方と同じ）")),
-            ("ライセンス", ("コードは MIT。重み (モデル本体) は FunASR のモデルライセンス: 商用利用可、ただし出典の表記が必要 "
-                            "(https://github.com/modelscope/FunASR/blob/main/MODEL_LICENSE)。PLAN の方針ではこの条件で使用可")),
+            ("ライセンス", ("コードは MIT。重み (モデル本体) は FunASR のモデルライセンス (https://github.com/modelscope/FunASR/blob/main/MODEL_LICENSE): "
+                            "使用・複製・改変・共有でき、出典と作者・モデル名の表示が必要。ただし条文に『参考と学習の目的のみで提供』とも書いてあり、"
+                            "商用利用の可否の法務確認は未了 (PLAN Q5。要確認)。PLAN の決定 D10 で、中国系のモデルは使ってよいとしている")),
         ]
 
 
@@ -237,7 +239,7 @@ class Emotion2VecRecognizer:
         if not labels or len(labels) != len(vals):
             raise RuntimeError(f"emotion2vec+ の出力が読めません（分類 {len(labels or [])} 個 / スコア {len(vals or [])} 個）")
         scores: dict[str, float] = {}
-        for lab, v in zip(labels, vals):
+        for lab, v in zip(labels, vals, strict=True):
             scores[canonical_e2v(lab)] = round(float(v), 6)
         top = max(scores, key=lambda k: scores[k])
         return Recognition("", top.upper(), scores)
@@ -298,6 +300,40 @@ class WhisperRecognizer:
 # ---------------------------------------------------------------------------
 # 実行と保存 (途中から再開できる)
 # ---------------------------------------------------------------------------
+def _rss_mb() -> tuple[float | None, float | None]:
+    """(今のメモリ使用量, これまでの最大) を MB で。Linux / macOS だけ。分からなければ None。"""
+    peak = cur = None
+    try:
+        import resource
+
+        v = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+        peak = v / (1024 * 1024) if sys.platform == "darwin" else v / 1024      # Linux は KB、macOS は バイト
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        with open("/proc/self/statm") as f:
+            import os
+
+            cur = int(f.read().split()[1]) * os.sysconf("SC_PAGE_SIZE") / (1024 * 1024)
+    except Exception:  # noqa: BLE001
+        pass
+    return cur, peak
+
+
+def meta_path(cache_path: Path) -> Path:
+    return cache_path.with_name(cache_path.stem + ".meta.json")
+
+
+def _load_meta(cache_path: Path | None) -> dict[str, Any]:
+    if cache_path is None or not meta_path(cache_path).is_file():
+        return {}
+    try:
+        d = json.loads(meta_path(cache_path).read_text(encoding="utf-8"))
+        return d if isinstance(d, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
 def audio_seconds(path: Path) -> float:
     """音声の長さ (秒)。読めなければ 0。"""
     try:
@@ -329,7 +365,8 @@ def run_model(
     progress: Callable[[str], None] = say, every: int = 20,
 ) -> ModelRun:
     """clips を 1 本ずつ rec に通す。結果は 1 本ごとに cache_path (JSON Lines) に書き足すので、止まっても続きから再開できる。"""
-    run = ModelRun(rec.key, rec.label, rec.has_emotion, getattr(rec, "report_cer", True), info=rec.info(), load_sec=load_sec)
+    run = ModelRun(rec.key, rec.label, rec.has_emotion, getattr(rec, "report_cer", True), info=rec.info(), load_sec=load_sec,
+                   meta=_load_meta(cache_path))
     sig = rec.signature()
     cached = _load_cache(cache_path, sig) if cache_path else {}
     todo = [c for c in clips if c.file not in cached]
@@ -340,11 +377,15 @@ def run_model(
     run.n_cached = len(clips) - len(todo)
     if run.n_cached:
         progress(f"  前回の結果 {run.n_cached} 件を再利用します ({cache_path})")
+    loaded_here = False
+    after_load: tuple[float | None, float | None] = (None, None)
     if todo and hasattr(rec, "prepare"):
         progress(f"  モデルを準備しています: {rec.label} ...")
         t_load = time.perf_counter()
         rec.prepare()      # 読み込みの失敗 (ライブラリが無いなど) は、1本ずつの失敗にせず、ここで止める
         run.load_sec = load_sec + time.perf_counter() - t_load
+        after_load = _rss_mb()
+        loaded_here = True
     fh = None
     if cache_path and todo:
         cache_path.parent.mkdir(parents=True, exist_ok=True)
@@ -377,4 +418,18 @@ def run_model(
     finally:
         if fh:
             fh.close()
+    if loaded_here and cache_path:       # モデルを読み込んだ実行だけ、読み込み秒とメモリを記録する (あとで Excel の『実行情報』に載せる)
+        cur, peak = _rss_mb()
+        meta = {"model": rec.label, "load_sec": round(run.load_sec, 1), "rss_after_load_mb": _r(after_load[0]), "peak_rss_mb": _r(peak),
+                "rss_end_mb": _r(cur), "n_processed": len(todo), "threads": int(getattr(rec, "threads", 0)),
+                "date": time.strftime("%Y-%m-%d %H:%M:%S")}
+        try:
+            meta_path(cache_path).write_text(json.dumps(meta, ensure_ascii=False, indent=1), encoding="utf-8")
+            run.meta = meta
+        except OSError:
+            pass
     return run
+
+
+def _r(v: float | None) -> float | None:
+    return None if v is None else round(v)

@@ -12,7 +12,7 @@
   pick    対象の感情だけを候補にして、スコアが最大のものを選ぶ（emotion2vec+ のようにスコアを出すモデルだけ）
           『4分類にしぼれば、どこまで当たるか』の見方。実際の組み込みでも、この選び方はできる
 
-正解率の注意: 4分類の件数は 平常 と 喜び・怒り・悲しみ で大きく違う（FLEURS は数百件、JVNV の3感情は約800件）ので、
+正解率の注意: 4分類の件数は 平常 と 喜び・怒り・悲しみ で大きく違う（FLEURS は266件、JVNV の3感情は786件）ので、
 正解率（件数で重みを付けた値）とは別に『平均再現率』（4つの感情を同じ重みで平均した値）も出す。
 """
 from __future__ import annotations
@@ -189,6 +189,24 @@ class NeutralEval:
 
 def neutral_eval(clips: list[Clip], run: ModelRun) -> NeutralEval | None:
     done = [c for c in clips if c.emotion == "neutral" and c.file in run.results and not run.results[c.file].error]
+    return _neutral_of(done, run)
+
+
+def neutral_by_speaker(clips: list[Clip], run: ModelRun) -> list[tuple[str, NeutralEval]]:
+    """平常の音声を話者（FLEURS では性別）ごとに分けた結果。録音や話者による偏り（全部まとめて『悲しみ』など）を見つけるため。話者が 2 組以上あるときだけ。"""
+    done = [c for c in clips if c.emotion == "neutral" and c.file in run.results and not run.results[c.file].error]
+    names = sorted({c.speaker for c in done if c.speaker})
+    if len(names) < 2:
+        return []
+    out = []
+    for n in names:
+        e = _neutral_of([c for c in done if c.speaker == n], run)
+        if e is not None:
+            out.append((n, e))
+    return out
+
+
+def _neutral_of(done: list[Clip], run: ModelRun) -> NeutralEval | None:
     if not done:
         return None
     counts = Counter(predicted_label(run.results[c.file].tag) for c in done)
@@ -216,6 +234,7 @@ class ModelCompare:
     neutral: NeutralEval | None
     speed_by_dataset: dict[str, dict[str, float]]
     cer_by_dataset: dict[str, CerTable] = field(default_factory=dict)
+    neutral_groups: list[tuple[str, NeutralEval]] = field(default_factory=list)      # 平常の音声の話者（性別）ごと
 
 
 def views_for(run: ModelRun) -> tuple[str, ...]:
@@ -256,5 +275,5 @@ def compare_models(clips: list[Clip], runs: list[ModelRun], opts=None) -> list[M
                 t = cer_table(clips, run, opts, f"{n}", only=files)
                 if t.n_clips:
                     cers[n] = t
-        out.append(ModelCompare(run, four, six, seven, neutral_eval(clips, run), spd, cers))
+        out.append(ModelCompare(run, four, six, seven, neutral_eval(clips, run), spd, cers, neutral_by_speaker(clips, run)))
     return out

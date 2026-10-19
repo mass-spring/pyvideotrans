@@ -71,3 +71,35 @@ def test_matches_pyvideotrans_emotion_module():
     # pyVideoTrans は 不明・タグなし・未知のタグを平常に読み替える。fold_to_pvt(predicted_label(...)) が同じ結果になる
     for tag in [*mod.SENSEVOICE_EMOTION_TAGS, "", None, "WHATEVER"]:
         assert labels.fold_to_pvt(labels.predicted_label(tag or "")) == mod.map_sensevoice_tag(tag)[0]
+
+
+def test_emotion2vec_names_are_read_like_sensevoice_tags():
+    # emotion2vec+ の分類名 (小文字) も、SenseVoice のタグ (大文字) と同じ読み方で 予測の感情になる
+    for name in ("angry", "disgusted", "fearful", "happy", "neutral", "sad", "surprised"):
+        assert labels.predicted_label(name) == name and labels.predicted_label(name.upper()) == name
+    assert labels.predicted_label("OTHER") == labels.EMO_OTHER and labels.predicted_label("other") == labels.EMO_OTHER
+    assert labels.predicted_label("UNKNOWN") == labels.UNKNOWN and labels.predicted_label("<unk>") == labels.UNKNOWN
+    # SenseVoice の読み方は変わらない (OTHER という SenseVoice のタグは無い)
+    assert "OTHER" not in labels.SV_TAG_TO_LABEL and labels.SV_TAG_TO_LABEL["HAPPY"] == "happy"
+
+
+def test_other_is_a_separate_prediction_column_and_folds_to_neutral():
+    assert labels.EMO_OTHER in labels.ALL_PRED_LABELS and labels.EMO_OTHER not in labels.PRED_LABELS      # 既存の SenseVoice の表の列は変わらない
+    assert labels.EMO_OTHER != labels.OTHER                                                                # 3感情の見方の『その他』とは別
+    assert labels.fold_to_pvt(labels.EMO_OTHER) == "neutral"
+    assert labels.core3_view(labels.EMO_OTHER) == labels.OTHER
+    for k in labels.ALL_PRED_LABELS:
+        assert k in labels.JA
+
+
+def test_canonical_e2v():
+    assert labels.canonical_e2v("生气/angry") == "angry" and labels.canonical_e2v("开心/happy") == "happy"
+    assert labels.canonical_e2v("中立/neutral") == "neutral" and labels.canonical_e2v("其他/other") == "other"
+    assert labels.canonical_e2v("<unk>") == "unknown" and labels.canonical_e2v("happy") == "happy"
+    with pytest.raises(ValueError, match="読めません"):
+        labels.canonical_e2v("unuse1")
+
+
+def test_four_and_six_classes_match_plan():
+    assert labels.FOUR == ("neutral", "happy", "angry", "sad")        # PLAN §5.3: 平常・喜び・怒り・悲しみ
+    assert set(labels.SIX) == set(labels.EMOTIONS) - {"neutral"}

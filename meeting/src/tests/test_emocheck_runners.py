@@ -139,6 +139,7 @@ def test_sensevoice_recognizer_calls_funasr_like_pyvideotrans(tmp_path, monkeypa
     assert calls["threads"] == 3 and calls["init"]["ncpu"] == 3      # funasr の ncpu (既定4) がスレッド数を上書きしないように
     info = dict(rec.info())
     assert "FunASR" in info["ライセンス"] and "商用" in info["ライセンス"] and "出典" in info["ライセンス"]
+    assert "法務確認は未了" in info["ライセンス"] and "PLAN Q5" in info["ライセンス"]      # emotion2vec+ と同じ扱い (同じモデルライセンス)
     assert rec.signature()["language"] == "auto" and rec.has_emotion
 
 
@@ -246,3 +247,133 @@ def test_threads_are_recorded_with_each_result_and_survive_the_cache(tmp_path):
     old = tmp_path / "old.jsonl"
     old.write_text(json.dumps({"file": "c0.wav", "sig": {"model": "fake", "v": 1}, "text": "x", "tag": "", "sec": 1.0}) + "\n", encoding="utf-8")
     assert runners._load_cache(old, {"model": "fake", "v": 1})["c0.wav"].threads == 0
+
+
+E2V_LABELS = ["生气/angry", "厌恶/disgusted", "恐惧/fearful", "开心/happy", "中立/neutral", "其他/other", "难过/sad", "吃惊/surprised", "<unk>"]
+
+
+def fake_e2v_modules(monkeypatch, calls, scores):
+    class FakeAutoModel:
+        def __init__(self, **kw):
+            calls["init"] = kw
+
+        def generate(self, **kw):
+            calls["gen"] = kw
+            return [{"key": "x", "labels": E2V_LABELS, "scores": scores}]
+
+    monkeypatch.setitem(sys.modules, "torch", types.SimpleNamespace(set_num_threads=lambda n: calls.setdefault("threads", n)))
+    monkeypatch.setitem(sys.modules, "funasr", types.SimpleNamespace(AutoModel=FakeAutoModel))
+
+
+def test_emotion2vec_recognizer_calls_funasr_and_keeps_all_scores(tmp_path, monkeypatch):
+    calls: dict = {}
+    fake_e2v_modules(monkeypatch, calls, [0.01, 0.0, 0.02, 0.1, 0.05, 0.0, 0.8, 0.02, 0.0])
+    rec = runners.Emotion2VecRecognizer("iic/emotion2vec_plus_large", "cpu", 3)
+    assert "init" not in calls                                          # 作っただけでは読み込まない
+    out = rec.recognize(tmp_path / "a.wav")
+    assert out.text == "" and out.tag == "SAD"                          # 最大のスコア (難过/sad)
+    assert set(out.scores) == {"angry", "disgusted", "fearful", "happy", "neutral", "other", "sad", "surprised", "unknown"}
+    assert out.scores["sad"] == pytest.approx(0.8) and out.scores["happy"] == pytest.approx(0.1)
+    init, gen = calls["init"], calls["gen"]
+    assert init["model"] == "iic/emotion2vec_plus_large" and init["device"] == "cpu" and init["disable_update"] is True and init["hub"] == "ms"
+    assert init["ncpu"] == 3 and calls["threads"] == 3                  # funasr の ncpu (既定4) がスレッド数を上書きしないように
+    assert "vad_model" not in init
+    assert gen["input"].endswith("a.wav") and gen["granularity"] == "utterance" and gen["extract_embedding"] is False
+    assert (rec.key, rec.label) == ("emotion2vec_plus_large", "emotion2vec+ large")
+    assert rec.has_emotion and rec.has_scores and not rec.report_cer
+
+
+def test_emotion2vec_other_and_unknown_are_kept_as_separate_predictions(tmp_path, monkeypatch):
+    from emocheck import labels
+
+    calls: dict = {}
+    fake_e2v_modules(monkeypatch, calls, [0.0, 0.0, 0.0, 0.1, 0.1, 0.7, 0.1, 0.0, 0.0])
+    rec = runners.Emotion2VecRecognizer("iic/emotion2vec_plus_base", "cpu", 1)
+    r = rec.recognize(tmp_path / "a.wav")
+    assert r.tag == "OTHER" and labels.predicted_label(r.tag) == labels.EMO_OTHER and rec.key == "emotion2vec_plus_base"
+    fake_e2v_modules(monkeypatch, calls, [0.0, 0.0, 0.0, 0.0, 0.1, 0.0, 0.0, 0.0, 0.9])
+    r2 = runners.Emotion2VecRecognizer("iic/emotion2vec_plus_base", "cpu", 1).recognize(tmp_path / "a.wav")
+    assert r2.tag == "UNKNOWN" and labels.predicted_label(r2.tag) == labels.UNKNOWN
+
+
+def test_emotion2vec_hub_follows_the_model_name(monkeypatch):
+    calls: dict = {}
+    fake_e2v_modules(monkeypatch, calls, [0.1] * 9)
+    hf = runners.Emotion2VecRecognizer("emotion2vec/emotion2vec_plus_large", "cpu", 1)
+    assert hf.hub == "hf" and hf.key == "emotion2vec_plus_large"
+    hf.prepare()
+    assert calls["init"]["hub"] == "hf"
+    assert runners.Emotion2VecRecognizer("iic/emotion2vec_plus_base").hub == "ms"
+    assert runners.Emotion2VecRecognizer("emotion2vec/emotion2vec_plus_base", hub="ms").hub == "ms"      # 明示すれば優先
+
+
+def test_emotion2vec_info_records_license_and_pending_legal_check():
+    info = dict(runners.Emotion2VecRecognizer().info())
+    assert "FunASR" in info["ライセンス"] and "model-license" in info["ライセンス"] and "MODEL_LICENSE" in info["ライセンス"]
+    assert "法務確認が未了" in info["ライセンス"] and "PLAN Q5" in info["ライセンス"] and "参考と学習" in info["ライセンス"]
+    assert "ModelScope" in info["モデル"] and "emotion2vec+ large" in info["モデル"] and "extract_embedding=False" in info["設定"]
+    assert runners.Emotion2VecRecognizer("iic/emotion2vec_plus_large").signature() != runners.Emotion2VecRecognizer("iic/emotion2vec_plus_base").signature()
+
+
+def test_emotion2vec_missing_funasr_and_bad_output(tmp_path, monkeypatch):
+    monkeypatch.setitem(sys.modules, "funasr", None)
+    monkeypatch.setitem(sys.modules, "torch", types.SimpleNamespace(set_num_threads=lambda n: None))
+    with pytest.raises(InputError, match="uv run --with funasr"):
+        runners.Emotion2VecRecognizer().prepare()
+
+    class Broken:
+        def __init__(self, **kw):
+            pass
+
+        def generate(self, **kw):
+            return [{"key": "x", "labels": E2V_LABELS, "scores": [0.5, 0.5]}]
+
+    monkeypatch.setitem(sys.modules, "funasr", types.SimpleNamespace(AutoModel=Broken))
+    with pytest.raises(RuntimeError, match="出力が読めません"):
+        runners.Emotion2VecRecognizer().recognize(tmp_path / "a.wav")
+
+
+def test_scores_are_saved_in_the_cache_and_come_back(tmp_path):
+    class Scored(FakeRec):
+        key = "scored"
+
+        def recognize(self, path):
+            return runners.Recognition("", "HAPPY", {"happy": 0.9, "sad": 0.1})
+
+    clips = make_clips(tmp_path, 2)
+    cache = tmp_path / "scored.jsonl"
+    run = runners.run_model(Scored(), clips, cache, progress=lambda m: None)
+    assert run.has_scores and run.results["c0.wav"].scores == {"happy": 0.9, "sad": 0.1}
+    assert json.loads(cache.read_text(encoding="utf-8").splitlines()[0])["scores"] == {"happy": 0.9, "sad": 0.1}
+    again = runners.run_model(Scored(), clips, cache, progress=lambda m: None)
+    assert again.n_cached == 2 and again.results["c1.wav"].scores == {"happy": 0.9, "sad": 0.1}
+    # スコアを持たないモデル (SenseVoice) の保存形式は今までと同じ (scores の項目を書かない)
+    plain_cache = tmp_path / "plain.jsonl"
+    plain = runners.run_model(FakeRec(), clips, plain_cache, progress=lambda m: None)
+    assert "scores" not in plain_cache.read_text(encoding="utf-8") and not plain.has_scores
+    assert runners._load_cache(plain_cache, {"model": "fake", "v": 1})["c0.wav"].scores is None
+
+
+def test_meta_with_load_time_and_memory_is_saved_only_when_the_model_was_loaded(tmp_path):
+    class Loader(FakeRec):
+        threads = 2
+
+        def prepare(self):
+            pass
+
+    clips = make_clips(tmp_path, 2)
+    cache = tmp_path / "c" / "fake.jsonl"
+    run = runners.run_model(Loader(), clips, cache, progress=lambda m: None)
+    meta = json.loads(runners.meta_path(cache).read_text(encoding="utf-8"))
+    assert meta["model"] == "偽モデル" and meta["n_processed"] == 2 and meta["threads"] == 2 and meta["load_sec"] >= 0
+    assert set(meta) >= {"load_sec", "rss_after_load_mb", "peak_rss_mb", "rss_end_mb", "date"} and run.meta == meta
+    assert runners.meta_path(cache).name == "fake.meta.json"
+    # すべて再利用のとき (読み込まない) は、前回の記録をそのまま渡し、書き換えない
+    before = runners.meta_path(cache).read_text(encoding="utf-8")
+    run2 = runners.run_model(Loader(), clips, cache, progress=lambda m: None)
+    assert run2.meta == meta and runners.meta_path(cache).read_text(encoding="utf-8") == before and run2.load_sec == 0
+    # prepare の無い偽のモデルでは記録しない / 壊れた記録ファイルは無視する
+    plain = tmp_path / "p" / "fake.jsonl"
+    assert runners.run_model(FakeRec(), clips, plain, progress=lambda m: None).meta == {} and not runners.meta_path(plain).exists()
+    runners.meta_path(cache).write_text("{broken", encoding="utf-8")
+    assert runners.run_model(Loader(), clips, cache, progress=lambda m: None).meta == {}

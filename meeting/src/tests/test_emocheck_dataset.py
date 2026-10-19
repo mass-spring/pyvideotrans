@@ -124,3 +124,40 @@ def test_jvnv_preset_has_attribution():
     info = dict(dataset.DATASET_PRESETS["jvnv"]["info"])
     assert "CC BY-SA 4.0" in info["データのライセンス"] and "litagin/jvnv_corpus_v1_no_nv" in info["使った版"]
     assert "平常" in info["データの内容"]
+
+
+def test_read_labels_dataset_column_and_override(tmp_path):
+    for n in ("x.wav", "y.wav"):
+        sf.write(tmp_path / n, [0.0] * 160, SR)
+    (tmp_path / "l.csv").write_text("file,emotion,text,dataset\nx.wav,喜び,あ,corpusA\ny.wav,sad,い,\n", encoding="utf-8")
+    clips = dataset.read_labels(tmp_path / "l.csv", tmp_path)
+    assert [c.dataset for c in clips] == ["corpusA", ""]
+    assert [c.dataset for c in dataset.read_labels(tmp_path / "l.csv", tmp_path, dataset="jvnv")] == ["jvnv", "jvnv"]     # 渡した名前が優先
+    (tmp_path / "m.csv").write_text("file,emotion\nx.wav,happy\n", encoding="utf-8")
+    assert dataset.read_labels(tmp_path / "m.csv", tmp_path)[0].dataset == ""                                           # 列が無くても読める
+
+
+def test_read_sets_combines_datasets_and_rejects_clashes(tmp_path):
+    for d in ("a", "b"):
+        (tmp_path / d).mkdir()
+    sf.write(tmp_path / "a" / "x.wav", [0.0] * 160, SR)
+    sf.write(tmp_path / "b" / "y.wav", [0.0] * 160, SR)
+    sf.write(tmp_path / "b" / "x.wav", [0.0] * 160, SR)
+    (tmp_path / "a.csv").write_text("file,emotion\nx.wav,happy\n", encoding="utf-8")
+    (tmp_path / "b.csv").write_text("file,emotion\ny.wav,neutral\n", encoding="utf-8")
+    (tmp_path / "c.csv").write_text("file,emotion\nx.wav,neutral\n", encoding="utf-8")
+    clips = dataset.read_sets([("jvnv", tmp_path / "a", tmp_path / "a.csv"), ("fleurs", tmp_path / "b", tmp_path / "b.csv")])
+    assert [(c.file, c.dataset, c.emotion) for c in clips] == [("x.wav", "jvnv", "happy"), ("y.wav", "fleurs", "neutral")]
+    assert clips[1].path == tmp_path / "b" / "y.wav"
+    with pytest.raises(InputError, match="同じ file 名が 2 つのデータにあります: x.wav"):
+        dataset.read_sets([("jvnv", tmp_path / "a", tmp_path / "a.csv"), ("other", tmp_path / "b", tmp_path / "c.csv")])
+    with pytest.raises(InputError, match="名前が重なっています"):
+        dataset.read_sets([("a", tmp_path / "a", tmp_path / "a.csv"), ("a", tmp_path / "b", tmp_path / "b.csv")])
+
+
+def test_fleurs_preset_has_license_and_domain_shift_note():
+    p = dataset.DATASET_PRESETS["fleurs"]
+    info = dict(p["info"])
+    assert "CC BY 4.0" in info["データのライセンス"] and "google/fleurs" in info["データの出典"] and dataset.FLEURS_REVISION in info["使った版"]
+    assert "平常" in info["データの内容"] and "公開データ" in info["利用の範囲"]
+    assert any("録音" in n and "JVNV" in n for n in p["notes"]) and any("男性" in n for n in p["notes"])

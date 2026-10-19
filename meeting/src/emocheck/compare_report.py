@@ -5,26 +5,27 @@
 """
 from __future__ import annotations
 
+import math
 import os
 import platform
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from asrcheck.report import BAD_FILL, BAD_FONT, BORDER, GOOD_FILL, GOOD_FONT, MID_FILL, NOTE_FILL, TITLE_FONT, _print_setup, _write_info
+from asrcheck.report import BORDER, GOOD_FILL, GOOD_FONT, BAD_FONT, MID_FILL, NOTE_FILL, TITLE_FONT, WRAP, _print_setup, _write_info
 from openpyxl import Workbook
-from openpyxl.formatting.rule import CellIsRule, ColorScaleRule
+from openpyxl.formatting.rule import CellIsRule, ColorScaleRule, FormulaRule
 from openpyxl.styles import Font, PatternFill
 from openpyxl.utils import get_column_letter
 from openpyxl.worksheet.worksheet import Worksheet
 
 from . import __version__
-from .analysis import rate, wilson
+from .analysis import rate
 from .compare import (NO_EMOTION, VIEW_FOLD, VIEW_HELP, VIEW_JA, VIEW_PICK, VIEW_STRICT, ModelCompare, ViewEval, compare_models,
                       dataset_names, predict)
 from .dataset import Clip, describe_counts
-from .labels import EMO_OTHER, EMOTIONS, FOUR, JA, NOTAG, ORDER, SIX, UNKNOWN, predicted_label
-from .report import ReportData, _cell, _header, _note, _num, _section
+from .labels import EMO_OTHER, FOUR, JA, NOTAG, ORDER, SIX, UNKNOWN, predicted_label
+from .report import ReportData, _cell, _header, _section
 from .runners import ModelRun
 
 SHEET_SUMMARY = "まとめ"
@@ -44,6 +45,23 @@ def _kpi_color(ws: Worksheet, rng: str) -> None:
     """rng の数字を、KPI（B4）以上なら緑、未満なら赤にする。"""
     ws.conditional_formatting.add(rng, CellIsRule(operator="greaterThanOrEqual", formula=[KPI_CELL], fill=CF_GOOD, font=GOOD_FONT))
     ws.conditional_formatting.add(rng, CellIsRule(operator="lessThan", formula=[KPI_CELL], fill=CF_BAD, font=BAD_FONT))
+
+
+def _note(ws: Worksheet, r: int, text: str, ncols: int, height: float | None = None, fill=NOTE_FILL) -> int:
+    """列 1〜ncols を結合した注意書きの行。高さは、結合した幅と文字数から決める（height を渡せば、それを使う）。"""
+    ws.merge_cells(start_row=r, start_column=1, end_row=r, end_column=ncols)
+    c = ws.cell(r, 1, text)
+    c.fill, c.alignment = fill, WRAP
+    units = sum(ws.column_dimensions[get_column_letter(i)].width or 8.43 for i in range(1, ncols + 1))
+    per_line = max(20.0, units / 1.9)           # 全角の文字は半角 2 つ分の幅。日本語まじりの平均で 1 文字 1.9 とみなす
+    lines = sum(max(1, math.ceil(len(part) / per_line)) for part in text.split("\n"))
+    ws.row_dimensions[r].height = height or 15.5 * lines + 4
+    return r + 1
+
+
+def _tall_header(ws: Worksheet, r: int, labels: list[str], height: float = 48) -> None:
+    _header(ws, r, labels)
+    ws.row_dimensions[r].height = height
 
 
 def _pct(ws: Worksheet, r: int, c: int, v: Any, bold: bool = False) -> Any:
@@ -98,10 +116,9 @@ def conclusions(cmp: list[ModelCompare]) -> list[str]:
 # まとめ
 # ---------------------------------------------------------------------------
 NOTES = [
-    "FLEURS（平常）と JVNV（感情）は、別のコーパスです。話者・マイク・部屋・1本の長さ（FLEURS 平均 約13秒、JVNV 約8秒）が違うので、"
-    "モデルが『感情』ではなく『録音の違い』で見分けている可能性があります。4分類の数字は、会議の音声での正解率とは別物です（要検証。模擬会議で測り直す）。",
-    "JVNV の喜び・怒り・悲しみは、演技で誇張された感情です。会議の自然な発言のほうが感情は弱いので、会議での正解率はこれより低くなる可能性があります（要検証）。",
-    "FLEURS の『平常』は、感情を指定せず文章を読み上げた録音を、平常と見なしたものです（人手で感情を確認してはいません）。話者は男性が約89%で、人数も少ないです。",
+    ("4分類の『平常』は FLEURS、『喜び・怒り・悲しみ』は JVNV と、別のコーパスで測っています。録音の条件が違うので、モデルが感情ではなく録音の違いで答えを分けていても、"
+     "この数字には表れません（良くも悪くもなりうる）。会議の音声（平常も感情も同じ録音）で測り直すまで、4分類の数字は目安です（要検証）。"),
+    "FLEURS の『平常』は、感情を指定せず文章を読み上げた録音を、平常と見なしたものです（人手で感情を確認してはいません）。",
     "4分類の件数は 平常（FLEURS）と 喜び・怒り・悲しみ（JVNV）で違うので、正解率（件数で重みを付けた値）と、平均再現率（4つを同じ重みで平均した値）の両方を載せています。",
     "emotion2vec+ の重み（モデル本体）のライセンスは FunASR のモデルライセンスで、『参考と学習の目的のみ』という文言があります。商用利用の可否は法務確認が未了です（PLAN Q5）。",
     "同じ文章を複数の話者が読んでいる（JVNV は4人が同じ文、FLEURS は1文を最大3人）ので、件数ほど独立なデータではありません。95%区間は実際より狭く見える可能性があります。",
@@ -110,7 +127,7 @@ NOTES = [
 
 def _write_summary(ws: Worksheet, d: ReportData, cmp: list[ModelCompare]) -> None:
     ws.title = SHEET_SUMMARY
-    widths = [34, 30, 14, 14, 14, 12, 12, 16, 18, 16, 16, 16, 16, 16, 16, 16, 16]
+    widths = [50, 36, 16, 16, 16, 16, 16, 16, 20, 16, 16, 16, 16, 16, 16, 16, 16]
     for i, w in enumerate(widths, start=1):
         ws.column_dimensions[get_column_letter(i)].width = w
     ws["A1"] = "感情の聞き分け 比較：4分類の KPI（平常・喜び・怒り・悲しみ）を測る"
@@ -124,7 +141,7 @@ def _write_summary(ws: Worksheet, d: ReportData, cmp: list[ModelCompare]) -> Non
     ws["A4"].font = Font(bold=True)
     kc = ws["B4"]
     kc.value, kc.number_format, kc.font, kc.fill, kc.border = PLAN_TARGET, "0%", Font(bold=True, size=12), MID_FILL, BORDER
-    ws["C4"] = "← この数字を書き換えると、下の緑（達成）・赤（未達）の色が変わります"
+    ws["C4"] = "← この数字を書き換えると、下の緑（達成）・赤（未達）の色が変わります（『KPI 判定』の文字は 70% で固定）"
     r = 6
 
     # ---- 結論 ----
@@ -144,7 +161,7 @@ def _write_summary(ws: Worksheet, d: ReportData, cmp: list[ModelCompare]) -> Non
                          f"『そのまま』の見方では不正解です。見方は下の 3 種類です。", 12, 34)
         for v in (VIEW_STRICT, VIEW_FOLD, VIEW_PICK):
             r = _note(ws, r, f"　{VIEW_JA[v]}：{VIEW_HELP[v]}", 12, 20, NOTE_FILL)
-        _header(ws, r, ["モデル", "見方", "4分類の正解率", "95%区間（下）", "95%区間（上）", "正解数", "件数", "KPI 判定", "平均再現率\n（4つを同じ重みで）"])
+        _tall_header(ws, r, ["モデル", "見方", "4分類の正解率", "95%区間（下）", "95%区間（上）", "正解数", "件数", "KPI 判定", "平均再現率\n（4つを同じ重みで）"], 36)
         r += 1
         first = r
         for mc in cmp:
@@ -163,6 +180,8 @@ def _write_summary(ws: Worksheet, d: ReportData, cmp: list[ModelCompare]) -> Non
         if r > first:
             _kpi_color(ws, f"C{first}:C{r - 1}")
             _kpi_color(ws, f"I{first}:I{r - 1}")
+            ws.conditional_formatting.add(f"H{first}:H{r - 1}", FormulaRule(formula=[f"$C{first}>={KPI_CELL}"], fill=CF_GOOD, font=GOOD_FONT))
+            ws.conditional_formatting.add(f"H{first}:H{r - 1}", FormulaRule(formula=[f"$C{first}<{KPI_CELL}"], fill=CF_BAD, font=BAD_FONT))
         r += 1
 
         # ---- ④ クラス別 ----
@@ -171,7 +190,8 @@ def _write_summary(ws: Worksheet, d: ReportData, cmp: list[ModelCompare]) -> Non
         for t in FOUR:
             head += [f"{JA[t]}\n再現率", f"{JA[t]}\n適合率"]
         head += ["いちばん多い間違い"]
-        _header(ws, r, head)
+        _tall_header(ws, r, head, 36)
+        ws.merge_cells(start_row=r, start_column=11, end_row=r, end_column=17)
         r += 1
         for mc in cmp:
             for v, e in mc.four.items():
@@ -185,8 +205,8 @@ def _write_summary(ws: Worksheet, d: ReportData, cmp: list[ModelCompare]) -> Non
                     if row and row.top_wrong:
                         tops.append(f"{JA[t]}→{_ja(row.top_wrong)}（{row.top_wrong_n}件）")
                 _cell(ws, r, 11, "　".join(tops), wrap=True)
+                ws.merge_cells(start_row=r, start_column=11, end_row=r, end_column=17)
                 r += 1
-        ws.column_dimensions["K"].width = 70
         r += 1
 
     # ---- ③ 平常の音声 ----
@@ -198,7 +218,7 @@ def _write_summary(ws: Worksheet, d: ReportData, cmp: list[ModelCompare]) -> Non
         r = _note(ws, r, "『感情が付かなかった率』＝ 平常・その他（other）・不明・タグなし と判定された割合（pyVideoTrans は、不明・タグなしを平常として扱うので、"
                          "感情が付かなかった＝平常として扱われる）。残りは 平常の音声に何かの感情を付けた誤りです。", 17, 34)
         head = ["モデル", "件数", "感情が付かなかった率", "95%区間（下）", "95%区間（上）", "感情を付けた率（誤り）", "4つから最大を選ぶと平常"] + [f"内訳：{_ja(x)}" for x in (*ORDER, EMO_OTHER, UNKNOWN, NOTAG)]
-        _header(ws, r, head)
+        _tall_header(ws, r, head, 50)
         r += 1
         for mc in neutral_models:
             n = mc.neutral
@@ -214,6 +234,26 @@ def _write_summary(ws: Worksheet, d: ReportData, cmp: list[ModelCompare]) -> Non
                 _pct(ws, r, 8 + j, n.share(x))
             r += 1
         r += 1
+        if any(mc.neutral_groups for mc in neutral_models):
+            ws.cell(r, 1, "平常の音声を、話者（FLEURS は性別）ごとに見た表").font = Font(bold=True)
+            r += 1
+            r = _note(ws, r, ("FLEURS の話者は少なく（話者 ID が無く、性別だけ分かる）、同じ人の録音がまとまっています。全体の数字は、特定の話者・録音の判定に引っ張られている可能性があります。"
+                              "話者ごとに大きく違うときは、『感情が付かなかった率』は感情の読み取りの成績というより、録音や話者への反応を見ている疑いがあります（要検証）。"), 17)
+            _tall_header(ws, r, ["モデル", "話者", "件数", "感情が付かなかった率", "平常と判定", "感情を付けた率（誤り）", "いちばん多く付いた予測", "その割合"], 36)
+            r += 1
+            for mc in neutral_models:
+                for g, n in mc.neutral_groups:
+                    top = max(n.counts.items(), key=lambda kv: (kv[1], -(list(ORDER).index(kv[0]) if kv[0] in ORDER else 99)))
+                    _cell(ws, r, 1, mc.run.label, wrap=True)
+                    _cell(ws, r, 2, g)
+                    _cell(ws, r, 3, n.n, "#,##0")
+                    _pct(ws, r, 4, n.no_emotion_rate, True)
+                    _pct(ws, r, 5, n.neutral_rate)
+                    _pct(ws, r, 6, n.emotion_rate)
+                    _cell(ws, r, 7, _ja(top[0]))
+                    _pct(ws, r, 8, rate(top[1], n.n))
+                    r += 1
+            r += 1
 
     # ---- ④ JVNV の 6 感情 ----
     six_models = [mc for mc in cmp if mc.six]
@@ -222,7 +262,7 @@ def _write_summary(ws: Worksheet, d: ReportData, cmp: list[ModelCompare]) -> Non
         r = _note(ws, r, "感情のある音声が無いので測れていません。", 12)
     else:
         head = ["モデル", "見方", "6感情の正解率", "95%区間（下）", "95%区間（上）", "正解数", "件数", "平均再現率"] + [f"{JA[t]}\n再現率" for t in SIX] + ["いちばん多く出した予測", "その割合"]
-        _header(ws, r, head)
+        _tall_header(ws, r, head, 36)
         r += 1
         for mc in six_models:
             for v in (VIEW_STRICT, VIEW_PICK):
@@ -290,8 +330,9 @@ def _write_summary(ws: Worksheet, d: ReportData, cmp: list[ModelCompare]) -> Non
             _cell(ws, r, 7, sp["sec_per_clip"], "0.00")
             _cell(ws, r, 8, "・".join(map(str, thr)) if thr else "(記録なし)")
             r += 1
-    r = _note(ws, r, ("RTF は、別の重い処理が同時に動いている CPU（4コア）で、1 本ずつ処理して測った参考値です。SenseVoice の JVNV の分は、前回の測定（スレッド数 1）を再利用しています。"
-                      "本番 PC の速さの判断には使わないでください。モデルの読み込み時間は含みません（『実行情報』にあります）。"), 12, 48)
+    r = _note(ws, r, ("RTF は、別の重い処理が同時に動いている CPU（4コア）で、1 本ずつ処理して測った参考値です。前回の結果を再利用した分（SenseVoice の JVNV など）は、"
+                      "そのときの条件（スレッド数は右端の列）の値で、時刻も混み具合も同じではありません。本番 PC の速さの判断には使わないでください。"
+                      "モデルの読み込み時間とメモリは含みません（『実行情報』にあります）。"), 12)
     r += 1
 
     # ---- ⑦ CER ----
@@ -397,7 +438,7 @@ def _write_recall(ws: Worksheet, d: ReportData, cmp: list[ModelCompare]) -> None
         evs = mc.seven or mc.six
         for v in (VIEW_STRICT, VIEW_FOLD, VIEW_PICK):
             e = evs.get(v)
-            if e is None or (v == VIEW_FOLD and mc.seven is None):
+            if e is None or (v == VIEW_FOLD and not mc.seven):          # 平常が無いときの『読み替え』は、そのままと同じになるので出さない
                 continue
             r = _section(ws, r, f"{mc.run.label}：{'7感情' if mc.seven else '6感情'}（{VIEW_JA[v] if v != VIEW_PICK else '対象の感情の中から最大を選ぶ'}）の感情ごとの成績")
             _header(ws, r, ["正解の感情", "件数", "正解数", "正解率（再現率）", "95%区間（下）", "95%区間（上）", "いちばん多い間違い先", "その感情と予測された件数", "適合率"],
@@ -568,7 +609,8 @@ EXPLAIN = [
     ("見方：対象の中から最大を選ぶ", VIEW_HELP[VIEW_PICK], "『4つに絞れば、どこまで当たるか』の上限に近い見方。スコアを出さない SenseVoice のタグでは計算できない。"),
     ("感情が付かなかった率", "平常の音声が 平常・その他（other）・不明・タグなし と判定された割合。", "高いほど、平常の発言に余計な感情を付けない。pyVideoTrans は不明・タグなしを平常として扱う。"),
     ("再現率", "ある感情の音声のうち、その感情と当てられた割合。", "低い感情は、別の感情や『平常』『不明』と間違えられている。混同表で行き先を見る。"),
-    ("適合率", "ある感情と予測した音声のうち、本当にその感情だった割合。", "再現率だけでは、何でも同じ感情と答えるモデルが良く見える。適合率が低い感情は、ほかの感情の音声を取り込んでいる。"),
+    ("適合率", "ある感情と予測した音声のうち、本当にその感情だった割合。",
+     "再現率だけでは、何でも同じ感情と答えるモデルが良く見える。適合率が低い感情は、ほかの感情の音声を取り込んでいる。4分類の適合率は、4分類の対象の音声の中での値（恐れ・嫌悪・驚きの音声は含まない）なので、実際の会議より高めに出る。"),
     ("混同表", "行＝正解の感情、列＝予測。対角線（左上から右下）が正解。", "対角線以外の数字が大きい所が、間違えやすい組み合わせ。"),
     ("95%区間", "件数が有限なので、本当の割合がこの範囲に入る確率が約95%という幅（Wilson の方法）。", "幅が広いのは件数が少ないから。同じ文を複数人が読むので、実際の幅はもう少し広い可能性がある。"),
     ("emotion2vec+ の 9 分類", "angry（怒り）・disgusted（嫌悪）・fearful（恐れ）・happy（喜び）・neutral（平常）・other（その他）・sad（悲しみ）・surprised（驚き）・unknown（不明）。",
@@ -634,15 +676,24 @@ def info_items(d: ReportData, cmp: list[ModelCompare]) -> list[tuple[str, Any]]:
         items.append(("処理件数", f"{sp_all['n']} 件（うち前回の結果の再利用 {run.n_cached} 件 / 失敗 {run.n_errors} 件）"))
         used = sorted({r.threads for r in run.results.values() if r.threads})
         items.append(("CPU スレッド数", "・".join(map(str, used)) + "（その結果を出したときの設定）" if used else "(記録なし)"))
-        items.append(("処理時間", f"モデル読み込み {run.load_sec:.1f} 秒 / 認識 合計 {sp_all['proc_sec']:.1f} 秒 / 音声 合計 {sp_all['audio_sec']:.1f} 秒 / RTF {rtf:.3f}"
+        load = f"モデル読み込み {run.load_sec:.1f} 秒" if run.load_sec > 0 else "モデル読み込み なし（今回は途中結果の再利用だけ）"
+        items.append(("処理時間", f"{load} / 認識 合計 {sp_all['proc_sec']:.1f} 秒 / 音声 合計 {sp_all['audio_sec']:.1f} 秒 / RTF {rtf:.3f}"
                               + ("（今回の実行ぶん以外は、前回の測定の時間）" if run.n_cached else "")))
+        m = run.meta
+        if m:
+            items.append(("モデル読み込みとメモリ（最後に読み込んだ実行の記録）",
+                          f"読み込み {m.get('load_sec')} 秒 / 読み込み直後のメモリ {m.get('rss_after_load_mb')} MB / 実行中の最大メモリ {m.get('peak_rss_mb')} MB "
+                          f"（そのプロセス全体の値。{m.get('n_processed')} 件を処理、スレッド数 {m.get('threads')}、記録 {m.get('date')}）"
+                          + (f"。{m['note']}" if m.get("note") else "")))
         if run.key in by_key and by_key[run.key].run.has_scores:
             items.append(("出力", "9 分類のスコア（softmax。合計 1）を 1 件ごとに保存。『1件ごとの結果』のスコアは 平常・喜び・怒り・悲しみ"))
         if run.key.startswith("emotion2vec"):
             items.append(("法務確認", "未了（PLAN Q5：emotion2vec+ の重みのライセンスの法務確認）。判断が出るまで、製品への組み込みは決めない"))
     items += [
         ("── 実行環境 ──", ""),
-        ("全体の所要時間", f"{d.elapsed_sec:.1f} 秒（この実行での合計。前回の結果を再利用した分は含まない）"),
+        ("全体の所要時間", (f"{d.elapsed_sec:.1f} 秒（この実行での合計。前回の結果を再利用した分は含まない）。"
+                           f"全モデルの認識にかかった時間の合計は {sum(r.sec for run in d.runs for r in run.results.values() if not r.error):,.0f} 秒"
+                           "（前回までの実行ぶんを含む。モデルごとの内訳は上の『処理時間』）")),
         ("計算機", f"{platform.platform()} / Python {platform.python_version()} / CPU {os.cpu_count()} コア（GPU なし）"),
         ("注意（処理速度）", "別の重い処理（スコア計算など）と同時に動かした環境で測った参考値。本番 PC の速さではない"),
         ("注意（ライセンス）", ("『1件ごとの結果』シートに JVNV・FLEURS の書き起こし文章が入っている。JVNV は CC BY-SA 4.0（表示・同じ条件での共有）、"

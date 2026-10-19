@@ -67,6 +67,7 @@ def build_parser() -> argparse.ArgumentParser:
     c.add_argument("--cache-dir", help="途中結果の保存場所（既定: 出力 Excel のフォルダ/emocheck_cache）。止まっても続きから再開できる")
     c.add_argument("--no-cache", action="store_true", help="途中結果を使わず、保存もしない")
     c.add_argument("--cache-only", action="store_true", help="モデルを動かして途中結果を保存するだけで、Excel は作らない（あとで同じコマンドから --cache-only を外すと、Excel だけ作る）")
+    c.add_argument("--note", help="Excel の『実行情報』に載せる一言メモ（実行の経緯など）")
     c.add_argument("--out", default="outputs/emotion_compare.xlsx", help="出力する Excel（既定 outputs/emotion_compare.xlsx）")
     c.set_defaults(func=cmd_compare)
 
@@ -167,6 +168,8 @@ def cmd_compare(args: argparse.Namespace) -> int:
         names.append(preset.get("name", n))
         info += [(f"【{preset.get('name', n)}】{k}", v) for k, v in preset.get("info", [])]
         notes += list(preset.get("notes", []))
+    if args.note:
+        info.append(("備考（実行者の記入）", args.note))
     d = ReportData(
         clips=clips, runs=runs, opts=NormOptions(lang="ja"), dataset_name=" + ".join(names), dataset_info=info, dataset_notes=notes,
         command="python -m emocheck " + " ".join(shlex.quote(a) for a in args.argv), labels_csv=" / ".join(str(x[2]) for x in sets),
