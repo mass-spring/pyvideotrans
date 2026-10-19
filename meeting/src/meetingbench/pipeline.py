@@ -9,7 +9,6 @@ runs/<v>/cond/<seg>__<cfg>__<n>/    評価用: meeting<v>.srt, speaker.json（�
 from __future__ import annotations
 
 import json
-import time
 from pathlib import Path
 
 from . import diarize as dz

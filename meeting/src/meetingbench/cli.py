@@ -44,7 +44,44 @@ def cmd_run(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_models(args: argparse.Namespace) -> int:
+    from . import model_fetch as mf
+
+    mf.fetch_builtin(say)
+    for k in args.only or list(mf.MS_MODELS):
+        mf.fetch_modelscope(k, say)
+    say("モデルの準備ができました")
+    return 0
+
+
+def cmd_report(args: argparse.Namespace) -> int:
+    from . import excel, pipeline as pl, reportinfo, scoring
+
+    lay = pl.Layout(args.data)
+    variants = [v for v in args.variant if (lay.runs(v) / "cond").is_dir()]
+    if not variants:
+        raise ValueError("評価用の結果がありません。先に run --stage assign（または all）を実行してください")
+    conds, segrows = [], []
+    for v in variants:
+        say(f"[{v}] 採点しています（asrcheck）...")
+        conds += scoring.score_variant(lay, v)
+        segrows += scoring.segment_report(lay, v)
+    manifest = reportinfo.load_manifest(lay)
+    recs = {v: {"minutes": manifest["variants"][v]["audio_sec"] / 60, "turns": manifest["variants"][v]["turns"],
+                "overlapped": manifest["variants"][v]["overlapped_turns"]} for v in variants if v in manifest.get("variants", {})}
+    cmd = "python -m meetingbench report " + " ".join(sys.argv[2:]) if len(sys.argv) > 2 else "python -m meetingbench report"
+    info = reportinfo.collect_info(lay, cmd, manifest, conds)
+    names = {c.name for c in conds}
+    detail = [n for v in variants for n in (f"{v}:silero/built-ja/n4", f"{v}:oracle/built-ja/n4", f"{v}:silero/cam/n4") if n in names]
+    out = excel.write_workbook(args.out, conds, segrows, info, excel.best_lines(conds, scoring.DEFAULT_KPIS), recs, detail_for=detail)
+    say(f"完了: {Path(out).resolve()}")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
+    from .diarize import BACKENDS, NUM_SPEAKERS
+    from .segments import SEG_KINDS
+
     p = argparse.ArgumentParser(prog="meetingbench",
                                 description="公開データ（JVNV）の疑似会議で、pyVideoTrans の話者分離と文字起こしを測る。")
     sub = p.add_subparsers(dest="command", required=True)
@@ -59,9 +96,6 @@ def build_parser() -> argparse.ArgumentParser:
     b.add_argument("--keep-48k", action="store_true", help="48kHz の複製も残す（1本約 180MB。既定は 16kHz だけ。同じ種で作り直せる）")
     b.set_defaults(func=cmd_build)
 
-    from .diarize import BACKENDS, NUM_SPEAKERS
-    from .segments import SEG_KINDS
-
     r = sub.add_parser("run", help="測定の段階を実行する（seg=区間, asr=文字起こし, diar=話者分離, assign=評価用に整える, all=全部）")
     r.add_argument("--stage", required=True, choices=["seg", "asr", "diar", "assign", "all"])
     r.add_argument("--data", default="data/testdata/pseudo_meeting", help="build の出力フォルダ")
@@ -72,6 +106,16 @@ def build_parser() -> argparse.ArgumentParser:
     r.add_argument("--threads", type=int, default=2, help="torch の CPU スレッド数（文字起こし）")
     r.add_argument("--force", action="store_true", help="結果があっても作り直す")
     r.set_defaults(func=cmd_run)
+
+    m = sub.add_parser("models", help="必要なモデルを取得する（あれば飛ばす。合計 約1.4GB。TLS は検証する）")
+    m.add_argument("--only", nargs="+", choices=["cam", "sensevoice", "fsmn_vad"], help="ModelScope のモデルのうち取得するもの（built 用 onnx は常に確認）")
+    m.set_defaults(func=cmd_models)
+
+    q = sub.add_parser("report", help="採点して Excel（まとめ・全指標・区間の診断・話者混同・発言別・実行情報）を作る")
+    q.add_argument("--data", default="data/testdata/pseudo_meeting")
+    q.add_argument("--variant", nargs="+", default=["A", "B"], choices=["A", "B"])
+    q.add_argument("--out", default="outputs/pseudo_meeting_asr.xlsx")
+    q.set_defaults(func=cmd_report)
     return p
 
 

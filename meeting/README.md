@@ -12,6 +12,7 @@
 | `src/voiceprofile/` | 声の登録：約3分の朗読録音から手本（10〜15秒×3〜4本）を自動で選び、pyVideoTrans が使う形で保存 |
 | `src/voicelab/` | 声の似かたの比較実験（条件を1つずつ変えて合成→採点→Excel）。Colab 用 |
 | `src/asrcheck/` | 文字起こし・話者分離の評価（誤字の率・話者の取り違え・DER を Excel に） |
+| `src/meetingbench/` | 公開データ（JVNV）で作る疑似会議で、pyVideoTrans の話者分離（built / ali_CAM）と文字起こしの最初の数字（DER・話者正解率・CER）を測って Excel に（PLAN P1-2。手順は `src/meetingbench/README.md`） |
 | `enroll/script_ja.md` | 登録用の朗読台本（同意文・日本語18文・任意の英仏中）と録音のやり方 |
 | `notebooks/voice_baseline_colab.ipynb` | Google Colab で比較実験を動かすノートブック |
 
