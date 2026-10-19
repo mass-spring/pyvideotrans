@@ -5,6 +5,7 @@
 これに『予測だけに出てくる』2つを足す:
   unknown  SenseVoice が <|EMO_UNKNOWN|> を出した (『自信がない』『判定しない』に近い)
   notag    出力に感情タグがひとつも無かった
+  emo_other  emotion2vec+ が other (9分類のうち『その他』) を出した。SenseVoice は出さない
 
 pyVideoTrans の map_sensevoice_tag との違い:
   pyVideoTrans は EMO_UNKNOWN・タグなし・未知のタグを『平常 (neutral、信頼度0)』に読み替える。
@@ -19,12 +20,14 @@ import re
 EMOTIONS = ("neutral", "happy", "angry", "sad", "fearful", "disgusted", "surprised")
 UNKNOWN = "unknown"
 NOTAG = "notag"
-PRED_LABELS = EMOTIONS + (UNKNOWN, NOTAG)
+EMO_OTHER = "emo_other"     # emotion2vec+ の 'other'。labels.OTHER (3感情の見方の『その他』) とは別物
+PRED_LABELS = EMOTIONS + (UNKNOWN, NOTAG)               # SenseVoice の予測 (これまでの表の列)
+ALL_PRED_LABELS = EMOTIONS + (EMO_OTHER, UNKNOWN, NOTAG)  # emotion2vec+ の other も含めた予測
 
 JA = {
     "neutral": "平常", "happy": "喜び", "angry": "怒り", "sad": "悲しみ",
     "fearful": "恐れ", "disgusted": "嫌悪", "surprised": "驚き",
-    UNKNOWN: "不明（EMO_UNKNOWN）", NOTAG: "タグなし",
+    UNKNOWN: "不明（EMO_UNKNOWN）", NOTAG: "タグなし", EMO_OTHER: "その他（other）",
 }
 
 # 表に並べる順番 (PLAN の 平常・喜び・怒り・悲しみ を先頭に)
@@ -33,6 +36,10 @@ ORDER = ("neutral", "happy", "angry", "sad", "fearful", "disgusted", "surprised"
 # PLAN §5.3 の 4 分類のうち、JVNV で測れる 3 感情
 CORE3 = ("happy", "angry", "sad")
 OTHER = "other"   # 3 分類の見方での『それ以外』
+# PLAN §5.3 の 4 分類 (平常・喜び・怒り・悲しみ)。平常の音声 (FLEURS など) があれば測れる
+FOUR = ("neutral", "happy", "angry", "sad")
+# JVNV の 6 感情 (平常なし)
+SIX = ("happy", "angry", "sad", "fearful", "disgusted", "surprised")
 
 # SenseVoice のタグ名 (<|HAPPY|> の中身) → 感情。videotrans/util/emotion.py の SENSEVOICE_TAG_MAP と同じ対応
 SV_TAG_TO_LABEL = {
@@ -42,6 +49,11 @@ SV_TAG_TO_LABEL = {
 SV_UNKNOWN_TAG = "EMO_UNKNOWN"
 SV_EMOTION_TAGS = frozenset(SV_TAG_TO_LABEL) | {SV_UNKNOWN_TAG}
 SV_TAG_RE = re.compile(r"<\|([^|]*)\|>")
+
+# emotion2vec+ の 9 分類 (tokens.txt: 生气/angry 厌恶/disgusted 恐惧/fearful 开心/happy 中立/neutral 其他/other 难过/sad 吃惊/surprised <unk>)
+E2V_CLASSES = ("angry", "disgusted", "fearful", "happy", "neutral", "other", "sad", "surprised", "unknown")
+# タグ名 (大文字) → 予測。SenseVoice の SV_TAG_TO_LABEL に無いもの。'OTHER' は emotion2vec+ だけが出す
+E2V_EXTRA_TAGS = {"OTHER": EMO_OTHER}
 
 _ALIASES: dict[str, str] = {}
 
@@ -86,16 +98,31 @@ def split_sensevoice_text(raw: str) -> tuple[str, str]:
 
 
 def predicted_label(tag: str) -> str:
-    """SenseVoice のタグ名 → 予測の感情。'' はタグなし、EMO_UNKNOWN と知らないタグは不明。"""
+    """タグ名 → 予測の感情。'' はタグなし、EMO_UNKNOWN と知らないタグは不明。
+
+    SenseVoice のタグ (HAPPY など) と、emotion2vec+ の分類名 (happy など。大文字小文字は問わない) の両方を読む。
+    emotion2vec+ の 'other' は EMO_OTHER、'unknown' (<unk>) は不明。
+    """
     t = (tag or "").strip().upper()
     if not t:
         return NOTAG
-    return SV_TAG_TO_LABEL.get(t, UNKNOWN)
+    return SV_TAG_TO_LABEL.get(t) or E2V_EXTRA_TAGS.get(t) or UNKNOWN
 
 
 def fold_to_pvt(label: str) -> str:
-    """pyVideoTrans (map_sensevoice_tag) と同じ読み替え: 不明・タグなしは平常にする。"""
-    return "neutral" if label in (UNKNOWN, NOTAG) else label
+    """pyVideoTrans (map_sensevoice_tag) と同じ読み替え: 不明・タグなしは平常にする。emotion2vec+ の other も同じ扱い (要検討)。"""
+    return "neutral" if label in (UNKNOWN, NOTAG, EMO_OTHER) else label
+
+
+def canonical_e2v(name: str) -> str:
+    """emotion2vec+ の分類名 ('生气/angry' '<unk>' など) → 'angry' 'unknown' のような英語の小文字名。読めなければ ValueError。"""
+    n = (name or "").strip().casefold()
+    if n in ("<unk>", "unk", "unknown", "未知"):
+        return "unknown"
+    n = n.rsplit("/", 1)[-1].strip()
+    if n not in E2V_CLASSES:
+        raise ValueError(f"emotion2vec+ の分類名が読めません: '{name}'（期待: {', '.join(E2V_CLASSES)}）")
+    return n
 
 
 def core3_view(label: str) -> str:

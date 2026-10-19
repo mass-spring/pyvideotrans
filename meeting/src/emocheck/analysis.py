@@ -22,7 +22,7 @@ from asrcheck.editdist import ErrorCounts
 from asrcheck.textnorm import NormOptions, normalize_text
 
 from .dataset import Clip
-from .labels import CORE3, EMOTIONS, JA, NOTAG, ORDER, OTHER, PRED_LABELS, UNKNOWN, core3_view, fold_to_pvt, predicted_label
+from .labels import ALL_PRED_LABELS, CORE3, EMO_OTHER, EMOTIONS, JA, NOTAG, ORDER, OTHER, UNKNOWN, core3_view, fold_to_pvt, predicted_label
 from .runners import ModelRun
 
 
@@ -138,7 +138,7 @@ def _top_wrong(row: dict[str, int], true_label: str) -> str:
     wrong = [(c, lab) for lab, c in row.items() if lab != true_label and c > 0]
     if not wrong:
         return ""
-    c, lab = max(wrong, key=lambda x: (x[0], -PRED_LABELS.index(x[1])))
+    c, lab = max(wrong, key=lambda x: (x[0], -ALL_PRED_LABELS.index(x[1])))
     return f"{JA[lab]}（{c}件）"
 
 
@@ -158,7 +158,9 @@ def emotion_stats(clips: list[Clip], run: ModelRun) -> EmotionStats:
     done = [c for c in clips if c.file in run.results and not run.results[c.file].error]
     preds = {c.file: predicted_label(run.results[c.file].tag) for c in done}
     true_labels = [e for e in ORDER if any(c.emotion == e for c in done)]
-    matrix = {t: {p: 0 for p in PRED_LABELS} for t in true_labels}
+    # 予測の列。emotion2vec+ の other は、実際に出たときだけ列を足す (SenseVoice の表は今までと同じ列のまま)
+    pred_labels = [p for p in ALL_PRED_LABELS if p != EMO_OTHER or any(x == EMO_OTHER for x in preds.values())]
+    matrix = {t: {p: 0 for p in pred_labels} for t in true_labels}
     for c in done:
         matrix[c.emotion][preds[c.file]] += 1
     per = []
@@ -180,7 +182,7 @@ def emotion_stats(clips: list[Clip], run: ModelRun) -> EmotionStats:
     core3_ok = sum(core3[t][t] for t in core3)
     return EmotionStats(
         model=run.label, key=run.key, n=len(done), correct=sum(1 for c in done if preds[c.file] == c.emotion),
-        true_labels=true_labels, pred_labels=list(PRED_LABELS), matrix=matrix, per_emotion=per,
+        true_labels=true_labels, pred_labels=pred_labels, matrix=matrix, per_emotion=per,
         by_speaker=_rows_by(done, preds, lambda c: c.speaker) if any(c.speaker for c in done) else [],
         by_style=_rows_by(done, preds, lambda c: c.style) if any(c.style for c in done) else [],
         speaker_emotion=se, pred_counts=Counter(preds.values()), core3=core3, core3_n=core3_n, core3_correct=core3_ok,

@@ -14,11 +14,18 @@
   この道具も同じく、1 本の wav を VAD なしで渡す。言語は --sv-language で選べる (既定 auto = pyVideoTrans と同じ)。
 - faster-whisper (MIT)  https://github.com/SYSTRAN/faster-whisper  → asrcheck.runners.WhisperEngine をそのまま使う
     ('large-v3-turbo' は mobiuslabsgmbh/faster-whisper-large-v3-turbo。CPU は int8、beam_size=5、VAD なし)
+- emotion2vec+ (コード MIT、重みは FunASR のモデルライセンス)  https://github.com/ddlBoJack/emotion2vec / https://huggingface.co/emotion2vec/emotion2vec_plus_large
+    model = AutoModel(model="iic/emotion2vec_plus_large", device="cpu", ncpu=スレッド数, disable_update=True)
+    res = model.generate(input=wavのパス, granularity="utterance", extract_embedding=False)
+    res[0] = {"key": ..., "labels": ["生气/angry", "厌恶/disgusted", ..., "<unk>"], "scores": [0.01, ...]}  (9 分類の softmax。合計 1)
+  funasr 1.4.16 の emotion2vec/model.py のソースと、モデルの tokens.txt で確認。HF の id (emotion2vec/emotion2vec_plus_large) は hub="hf" で読める。
+  1 本の音声を、そのまま (VAD・分割なしで) 1 回で処理する。
 """
 from __future__ import annotations
 
 import gc
 import json
+import logging
 import sys
 import time
 from dataclasses import dataclass, field
@@ -30,9 +37,11 @@ from typing import Any, Protocol
 from asrcheck.ioformats import InputError
 
 from .dataset import Clip
-from .labels import split_sensevoice_text
+from .labels import canonical_e2v, split_sensevoice_text
 
 SV_DEFAULT_MODEL = "iic/SenseVoiceSmall"
+E2V_LARGE_MODEL = "iic/emotion2vec_plus_large"
+E2V_BASE_MODEL = "iic/emotion2vec_plus_base"
 WHISPER_DEFAULT_MODEL = "large-v3-turbo"
 INSTALL_HINTS = {
     "funasr": ("uv run --with funasr --with torch --with torchaudio python -m emocheck run ...   (Linux の CPU だけの PC は torch を "
@@ -59,7 +68,8 @@ def trim_memory() -> None:
 @dataclass
 class Recognition:
     text: str
-    tag: str = ""          # SenseVoice の感情タグ名 ('HAPPY' など。タグなしは '')
+    tag: str = ""          # 感情タグ名 ('HAPPY' など。タグなしは ''。emotion2vec+ は 9 分類のうち最大のもの。'OTHER' 'UNKNOWN' もありうる)
+    scores: dict[str, float] | None = None    # emotion2vec+ の 9 分類のスコア ({'angry': 0.01, ...})。SenseVoice は None
 
 
 class Recognizer(Protocol):
@@ -84,6 +94,7 @@ class ClipResult:
     sec: float = 0.0       # この1本の処理にかかった秒 (モデルの読み込みは含まない)
     error: str = ""
     threads: int = 0       # 処理に使った CPU スレッド数 (0 = 記録なし)
+    scores: dict[str, float] | None = None    # emotion2vec+ の 9 分類のスコア (無いモデルは None)
 
 
 @dataclass
@@ -98,6 +109,11 @@ class ModelRun:
     load_sec: float = 0.0
     n_cached: int = 0      # 前回までの結果を再利用した件数
     n_errors: int = 0
+
+    @property
+    def has_scores(self) -> bool:
+        """分類ごとのスコアを持つモデルか (emotion2vec+)。『4つから選ぶ』の見方ができる。"""
+        return any(r.scores for r in self.results.values())
 
 
 def _version(pkg: str) -> str:
@@ -168,6 +184,79 @@ class SenseVoiceRecognizer:
 
 
 # ---------------------------------------------------------------------------
+# emotion2vec+ (FunASR)
+# ---------------------------------------------------------------------------
+class Emotion2VecRecognizer:
+    """emotion2vec+ (large / base)。9 分類 (angry disgusted fearful happy neutral other sad surprised unknown) のスコアを返す。
+
+    SenseVoice と違い、文字起こしは出さない (text は空)。タグは、スコアが最大の分類名 (大文字)。スコアは全部 scores に残すので、
+    『4つ (平常・喜び・怒り・悲しみ) の中から最大のものを選ぶ』見方も後から計算できる。
+    """
+    has_emotion = True
+    report_cer = False
+    has_scores = True
+
+    def __init__(self, model: str = E2V_LARGE_MODEL, device: str = "cpu", threads: int = 2, hub: str = "auto") -> None:
+        self.model_id, self.device, self.threads = model, device, max(1, threads)
+        # 'iic/...' は ModelScope、'emotion2vec/...' は Hugging Face のモデル名。hub='auto' なら名前で選ぶ
+        self.hub = ("hf" if model.startswith("emotion2vec/") else "ms") if hub == "auto" else hub
+        tail = model.rsplit("/", 1)[-1].lower()
+        self.key = "".join(ch if ch.isalnum() else "_" for ch in tail)       # 例: emotion2vec_plus_large (途中結果のファイル名にもなる)
+        self.label = "emotion2vec+ " + ("large" if "large" in tail else "base" if "base" in tail else tail)
+        self.model: Any = None
+
+    def prepare(self) -> None:
+        """モデルを読み込む (2回目以降は何もしない)。funasr / torch が無ければ、入れ方を案内する。"""
+        if self.model is not None:
+            return
+        try:
+            import torch
+            from funasr import AutoModel
+        except ImportError:
+            raise InputError(f"funasr / torch が入っていません。次のように実行すると一時的に入れて動かせます:\n  {INSTALL_HINTS['funasr']}") from None
+        # SenseVoice と同じく ncpu を必ず渡す (渡さないと funasr が torch のスレッド数を 4 に上書きする)
+        logging.disable(logging.INFO)       # 読み込み中に重みの名前が何百行も出るのを止める (警告とエラーは出す)
+        try:
+            self.model = AutoModel(model=self.model_id, hub=self.hub, device=self.device, ncpu=self.threads, disable_update=True,
+                                   disable_pbar=True, disable_log=True)
+        finally:
+            logging.disable(logging.NOTSET)
+        torch.set_num_threads(self.threads)
+        trim_memory()
+
+    def housekeeping(self) -> None:
+        trim_memory()
+
+    def recognize(self, path: Path) -> Recognition:
+        self.prepare()
+        # extract_embedding=False: 特徴ベクトルは要らない (返さない・保存しない)
+        res = self.model.generate(input=str(path), granularity="utterance", extract_embedding=False, disable_pbar=True)
+        if not res:
+            raise RuntimeError("emotion2vec+ が結果を返しませんでした")
+        labels, vals = res[0]["labels"], res[0]["scores"]
+        if not labels or len(labels) != len(vals):
+            raise RuntimeError(f"emotion2vec+ の出力が読めません（分類 {len(labels or [])} 個 / スコア {len(vals or [])} 個）")
+        scores: dict[str, float] = {}
+        for lab, v in zip(labels, vals):
+            scores[canonical_e2v(lab)] = round(float(v), 6)
+        top = max(scores, key=lambda k: scores[k])
+        return Recognition("", top.upper(), scores)
+
+    def signature(self) -> dict[str, Any]:
+        return {"model": self.model_id, "granularity": "utterance", "v": 1}
+
+    def info(self) -> list[tuple[str, Any]]:
+        return [
+            ("モデル", f"{self.label} ({self.model_id}。取得元: {'ModelScope' if self.hub == 'ms' else 'Hugging Face' if self.hub == 'hf' else self.hub})"),
+            ("ライブラリ", f"funasr {_version('funasr')} / torch {_version('torch')}"),
+            ("設定", f"granularity=utterance / extract_embedding=False / VAD・分割なし / {self.device} / 1本ずつ処理 / 9 分類のスコアを保存"),
+            ("ライセンス", ("コードは MIT。重みは FunASR のモデルライセンス（Hugging Face のカードでは license: other / model-license。SenseVoiceSmall と同じ系統）。"
+                            "条文（https://github.com/modelscope/FunASR/blob/main/MODEL_LICENSE ）は、使用・複製・改変・共有を認め、出典と作者・モデル名の表示を求める一方、"
+                            "『参考と学習の目的のみで提供』とも書いてある。商用利用の可否は法務確認が未了（PLAN Q5。要確認）")),
+        ]
+
+
+# ---------------------------------------------------------------------------
 # faster-whisper
 # ---------------------------------------------------------------------------
 class WhisperRecognizer:
@@ -229,7 +318,9 @@ def _load_cache(path: Path, sig: dict[str, Any]) -> dict[str, ClipResult]:
         except ValueError:
             continue   # 途中で止まって壊れた最後の行は捨てる
         if isinstance(d, dict) and d.get("sig") == sig and "file" in d and not d.get("error"):
-            out[d["file"]] = ClipResult(d.get("text", ""), d.get("tag", ""), float(d.get("sec", 0.0)), threads=int(d.get("threads", 0)))
+            sc = d.get("scores")
+            out[d["file"]] = ClipResult(d.get("text", ""), d.get("tag", ""), float(d.get("sec", 0.0)), threads=int(d.get("threads", 0)),
+                                        scores={str(k): float(v) for k, v in sc.items()} if isinstance(sc, dict) and sc else None)
     return out
 
 
@@ -266,14 +357,17 @@ def run_model(
             t0 = time.perf_counter()
             try:
                 r = rec.recognize(c.path)
-                res = ClipResult(r.text, r.tag, time.perf_counter() - t0, threads=int(getattr(rec, "threads", 0)))
+                res = ClipResult(r.text, r.tag, time.perf_counter() - t0, threads=int(getattr(rec, "threads", 0)), scores=r.scores)
             except Exception as e:  # noqa: BLE001  (1本の失敗で全体を止めない。失敗は表に残す)
                 res = ClipResult("", "", time.perf_counter() - t0, error=f"{type(e).__name__}: {e}"[:200])
                 run.n_errors += 1
             run.results[c.file] = res
             if fh:
-                fh.write(json.dumps({"file": c.file, "sig": sig, "text": res.text, "tag": res.tag, "sec": round(res.sec, 3),
-                                     "error": res.error, "threads": res.threads}, ensure_ascii=False) + "\n")
+                rec_line = {"file": c.file, "sig": sig, "text": res.text, "tag": res.tag, "sec": round(res.sec, 3),
+                            "error": res.error, "threads": res.threads}
+                if res.scores:        # スコアを持つモデルだけ書く (SenseVoice の途中結果の形は今までと同じ)
+                    rec_line["scores"] = res.scores
+                fh.write(json.dumps(rec_line, ensure_ascii=False) + "\n")
                 fh.flush()
             if i % 50 == 0 and hasattr(rec, "housekeeping"):
                 rec.housekeeping()

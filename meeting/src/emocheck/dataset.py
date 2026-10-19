@@ -32,6 +32,7 @@ HEADER_ALIASES = {
     "text": _ASR_ALIASES["text"],
     "speaker": _ASR_ALIASES["speaker"],
     "style": ["style", "group", "kind", "種類", "区分", "スタイル", "グループ"],
+    "dataset": ["dataset", "corpus", "データ", "データセット", "コーパス"],
 }
 _LOOKUP = {a.casefold(): k for k, v in HEADER_ALIASES.items() for a in v}
 
@@ -44,10 +45,14 @@ class Clip:
     text: str = ""     # 正解の書き起こし
     speaker: str = ""
     style: str = ""
+    dataset: str = ""  # どのデータ (jvnv / fleurs など) の音声か。ラベル CSV の dataset 列、または read_labels(dataset=...) で決まる
 
 
-def read_labels(labels_csv: str | Path, audio_dir: str | Path, check_files: bool = True) -> list[Clip]:
-    """ラベル CSV を読んで Clip のリストにする。音声が見つからないものがあれば、まとめてエラーにする。"""
+def read_labels(labels_csv: str | Path, audio_dir: str | Path, check_files: bool = True, dataset: str = "") -> list[Clip]:
+    """ラベル CSV を読んで Clip のリストにする。音声が見つからないものがあれば、まとめてエラーにする。
+
+    dataset を渡すと、全部の Clip にその名前を付ける (CSV に dataset 列があっても、渡した名前を使う)。
+    """
     p = Path(labels_csv)
     if not p.is_file():
         raise InputError(f"ラベル CSV が見つかりません: {p}\n  JVNV なら先に: python -m emocheck prepare-jvnv --jvnv-dir ... --out ...")
@@ -82,7 +87,7 @@ def read_labels(labels_csv: str | Path, audio_dir: str | Path, check_files: bool
         path = Path(name) if Path(name).is_absolute() else base / name
         if check_files and not path.is_file():
             missing.append(name)
-        clips.append(Clip(name, path, emo, d.get("text", ""), d.get("speaker", ""), d.get("style", "")))
+        clips.append(Clip(name, path, emo, d.get("text", ""), d.get("speaker", ""), d.get("style", ""), dataset or d.get("dataset", "")))
     if not clips:
         raise InputError(f"ラベル CSV に音声の行がありません: {p}")
     if missing:
@@ -91,6 +96,25 @@ def read_labels(labels_csv: str | Path, audio_dir: str | Path, check_files: bool
             f"音声ファイルが {len(missing)} 件見つかりません (--audio-dir = {base})。例:\n  {shown}"
             + ("\n  ..." if len(missing) > 5 else "")
         )
+    return clips
+
+
+def read_sets(sets: list[tuple[str, str | Path, str | Path]]) -> list[Clip]:
+    """複数のデータ [(名前, 音声フォルダ, ラベル CSV), ...] をまとめて読む。各 Clip の dataset に名前が入る。
+
+    途中結果 (キャッシュ) は file の名前で引くので、別のデータで同じ file 名があると混ざる。見つけたらエラーにする。
+    """
+    names = [n for n, _, _ in sets]
+    if len(set(names)) != len(names):
+        raise InputError(f"データの名前が重なっています: {names}")
+    clips: list[Clip] = []
+    owner: dict[str, str] = {}
+    for name, audio_dir, labels_csv in sets:
+        for c in read_labels(labels_csv, audio_dir, dataset=name):
+            if c.file in owner:
+                raise InputError(f"同じ file 名が 2 つのデータにあります: {c.file}（{owner[c.file]} と {name}）。途中結果が混ざるので、どちらかの file 名を変えてください")
+            owner[c.file] = name
+            clips.append(c)
     return clips
 
 
