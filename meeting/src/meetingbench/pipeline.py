@@ -132,7 +132,7 @@ def stage_assign(lay: Layout, v: str, say=print) -> list[Path]:
             dz.write_srt(cd / f"meeting{v}.srt", items)
             (cd / "speaker.json").write_text(json.dumps(labels), encoding="utf-8")
             dz.write_raw_csv(cd / "raw_diar.csv", raw)
-            info = {"seg": seg, "backend": cfg, "num_speakers": n, "subtitles": len(items), "labels_speakers": len(set(labels)),
+            info = {"seg": seg, "backend": cfg, "num_speakers": n, "subtitles": len(items), "labels_speakers": len(set(labels)), "raw_speakers": meta.get("raw_speakers"),
                     "diar_elapsed_sec": meta["elapsed_sec"], "diar_rtf": meta["rtf"]}
             # 正解の区間に対しては、本体の関数を実際に呼んだ結果（speaker_oracle）と一致することを確かめる
             if seg == "oracle" and (dd.parent / "speaker.json").is_file():

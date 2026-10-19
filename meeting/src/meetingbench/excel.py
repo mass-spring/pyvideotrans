@@ -29,6 +29,7 @@ CFG_JA = {
     "cam": "ali_CAM（CAM++）",
     TRUTH_CFG: "正解の話者を付与（区間の限界）",
 }
+CFG_SHORT = {"built-ja": "built(ja)", "built-zh": "built(zh)", "cam": "ali_CAM"}
 N_JA = {"n4": "4人と指定", "auto": "自動", "none": "—"}
 VAR_JA = {"A": "A 重ならない", "B": "B 約12.5%が重なる"}
 SEG_ORDER = {"oracle": 0, "silero": 1, "fsmn": 2}
@@ -79,15 +80,27 @@ def best_lines(conds: list[Cond], kpis: dict[str, Kpi]) -> list[str]:
         if b:
             out.append(f"録音{v}: 話者正解率（字幕単位）が最高だった条件は {b.seg}/{b.cfg}/{b.n} の {b.row_sub['spk_acc']:.1%}"
                        f"（KPI 最低ライン {kpis['spk_acc'].fmt(kpis['spk_acc'].minimum)} 以上）。")
-        cers = [c.row_sub["cer"] for c in cs if c.row_sub.get("cer") is not None]
+        cers = {c.seg: c.row_sub["cer"] for c in cs if c.row_sub.get("cer") is not None}
         if cers:
-            out.append(f"録音{v}: CER は {min(cers):.1%}〜{max(cers):.1%}（区間の切り方で変わる。話者分離の条件には依存しない）。")
+            out.append(f"録音{v}: CER は " + "、".join(f"{k} {x:.1%}" for k, x in sorted(cers.items(), key=lambda kv: SEG_ORDER.get(kv[0], 9)))
+                       + f"（KPI 最低ライン {kpis['cer'].fmt(kpis['cer'].minimum)} 以下）。")
+        ceil = [c for c in conds if c.variant == v and c.cfg == TRUTH_CFG and c.seg != "oracle"]
+        if ceil:
+            out.append(f"録音{v}: 字幕の区間はそのままで話者だけ正解にした上限（区間の切り方だけの影響）は、話者正解率 "
+                       + "、".join(f"{c.seg} {c.row_sub['spk_acc']:.1%}" for c in sorted(ceil, key=sort_key) if c.row_sub.get("spk_acc") is not None)
+                       + "、DER(collar 0) " + "、".join(f"{c.seg} {c.row_sub['der_0']:.1%}" for c in sorted(ceil, key=sort_key) if c.row_sub.get("der_0") is not None) + "。")
+        n_auto = {(c.cfg): c.info.get("raw_speakers") for c in cs if c.n == "auto" and c.seg == "oracle"}
+        n_4 = {(c.cfg): c.info.get("raw_speakers") for c in cs if c.n == "n4" and c.seg == "oracle"}
+        if n_4 or n_auto:
+            out.append(f"録音{v}: 話者分離モデルが出した話者の数（実際は4人）— 4人と指定: "
+                       + (" / ".join(f"{CFG_SHORT.get(k, k)} {x}人" for k, x in n_4.items() if x is not None) or "—")
+                       + "、自動: " + (" / ".join(f"{CFG_SHORT.get(k, k)} {x}人" for k, x in n_auto.items() if x is not None) or "—") + "。")
     return out
 
 
 def write_workbook(path: Path | str, conds: list[Cond], seg_rows: list[dict], info_items: list[tuple[str, Any]],
                    headline_notes: list[str], recs: dict[str, dict], kpis: dict[str, Kpi] | None = None,
-                   detail_for: list[str] | None = None) -> Path:
+                   detail_for: list[str] | None = None, not_measured: list[str] | None = None) -> Path:
     """conds: score_variant の結果。seg_rows: segment_report。info_items: 実行情報シートの (項目, 内容)。
 
     recs: {"A": {"minutes": 32.5, "turns": 275, "overlapped": 0}, ...}。detail_for: 発言別・話者混同を載せる条件の名前（Cond.name）。
@@ -95,7 +108,7 @@ def write_workbook(path: Path | str, conds: list[Cond], seg_rows: list[dict], in
     kpis = kpis or DEFAULT_KPIS
     conds = sorted(conds, key=sort_key)
     wb = Workbook()
-    _summary(wb.active, conds, kpis, headline_notes, recs)
+    _summary(wb.active, conds, kpis, headline_notes, recs, not_measured or [])
     _all_metrics(wb.create_sheet(), conds)
     _seg_sheet(wb.create_sheet(), seg_rows)
     picked = [c for c in conds if detail_for and c.name in detail_for]
@@ -115,7 +128,7 @@ def write_workbook(path: Path | str, conds: list[Cond], seg_rows: list[dict], in
 
 
 # ---------------------------------------------------------------------------
-def _summary(ws, conds: list[Cond], kpis: dict[str, Kpi], notes: list[str], recs: dict[str, dict]) -> None:
+def _summary(ws, conds: list[Cond], kpis: dict[str, Kpi], notes: list[str], recs: dict[str, dict], not_measured: list[str]) -> None:
     ws.title = "まとめ"
     ws["A1"] = "疑似会議（JVNV 公開データ）での話者付き文字起こしのベースライン — pyVideoTrans 内蔵の話者分離（built / ali_CAM）"
     ws["A1"].font = ar.TITLE_FONT
@@ -124,7 +137,7 @@ def _summary(ws, conds: list[Cond], kpis: dict[str, Kpi], notes: list[str], recs
     ws["A3"] = ("注意: スタジオ録音の朗読で、雑音・反響・相づち・言い淀みがなく、感情が大げさ。実会議より『やさしい』条件なので、"
                 "この数字は実会議の精度の上限に近い参考値（KPI の確定には、実際の模擬会議の録音で測り直す）。pyannote はトークン未取得のため未測定。")
     ws["A3"].alignment = ar.WRAP
-    ws.merge_cells("A3:Q3")
+    ws.merge_cells("A3:R3")
     ws.row_dimensions[3].height = 34
     r = 5
     ws.cell(r, 1, "KPI（PLAN §4.4 の初期案）と色").font = ar.SECTION_FONT
@@ -140,11 +153,11 @@ def _summary(ws, conds: list[Cond], kpis: dict[str, Kpi], notes: list[str], recs
         r += 1
         ws.cell(r, 1, "・" + t)
     r += 2
-    heads = ["録音", "区間の切り方", "話者分離", "人数の指定", "字幕数", "字幕の話者数", "CER", "cpCER",
+    heads = ["録音", "区間の切り方", "話者分離", "人数の指定", "字幕数", "話者数\n(モデルの生出力)", "話者数\n(字幕に付いた)", "CER", "cpCER",
              "DER 字幕単位\n(collar 0)", "DER 字幕単位\n(collar 0.25)", "話者正解率\n字幕単位",
              "DER 生出力\n(collar 0)", "DER 生出力\n(collar 0.25)", "話者正解率\n生出力",
              "処理時間\n(1時間あたり・分)", "RTF\n(処理÷音声)", "KPI判定\n(字幕単位)"]
-    widths = [16, 30, 34, 12, 8, 10, 9, 9, 12, 12, 12, 12, 12, 12, 14, 9, 22]
+    widths = [16, 30, 34, 12, 8, 12, 12, 9, 9, 12, 12, 12, 12, 12, 12, 14, 9, 22]
     head = r
     _hdr(ws, head, heads, widths)
     prev = None
@@ -153,31 +166,37 @@ def _summary(ws, conds: list[Cond], kpis: dict[str, Kpi], notes: list[str], recs
         rs, rr = c.row_sub, c.row_raw
         n_sub = c.info.get("subtitles")
         vals = [VAR_JA[c.variant], SEG_JA.get(c.seg, c.seg), CFG_JA.get(c.cfg, c.cfg), N_JA.get(c.n, c.n), n_sub,
-                c.info.get("labels_speakers"), rs.get("cer"), rs.get("cpcer"),
+                c.info.get("raw_speakers"), c.info.get("labels_speakers"), rs.get("cer"), rs.get("cpcer"),
                 rs.get("der_0"), rs.get("der_0.25"), rs.get("spk_acc"),
                 rr.get("der_0") if rr else None, rr.get("der_0.25") if rr else None, rr.get("spk_acc") if rr else None,
                 rs.get("minutes"), c.times.get("rtf"), rs.get("verdict")]
-        fmts = [None, None, None, None, "0", "0", "0.0%", "0.0%", "0.0%", "0.0%", "0.0%", "0.0%", "0.0%", "0.0%", "0.0", "0.000", None]
+        fmts = [None, None, None, None, "0", "0", "0", "0.0%", "0.0%", "0.0%", "0.0%", "0.0%", "0.0%", "0.0%", "0.0%", "0.0", "0.000", None]
         for j, (v, f) in enumerate(zip(vals, fmts), start=1):
-            _val(ws, r, j, v, f, wrap=j in (2, 3, 17))
+            _val(ws, r, j, v, f, wrap=j in (2, 3, 18))
         if prev is not None and (prev.variant, prev.seg) != (c.variant, c.seg):
             for j in range(1, len(heads) + 1):
                 ws.cell(r, j).border = ar.Border(top=ar.Side(style="medium", color="1F4E78"), left=ar.THIN, right=ar.THIN, bottom=ar.THIN)
         prev = c
-        _style(ws.cell(r, 7), kpis["cer"], rs.get("cer"))
-        _style(ws.cell(r, 9), kpis["der"], rs.get("der_0"))
-        _style(ws.cell(r, 11), kpis["spk_acc"], rs.get("spk_acc"))
+        _style(ws.cell(r, 8), kpis["cer"], rs.get("cer"))
+        _style(ws.cell(r, 10), kpis["der"], rs.get("der_0"))
+        _style(ws.cell(r, 12), kpis["spk_acc"], rs.get("spk_acc"))
         if rr:
-            _style(ws.cell(r, 12), kpis["der"], rr.get("der_0"))
-            _style(ws.cell(r, 14), kpis["spk_acc"], rr.get("spk_acc"))
+            _style(ws.cell(r, 13), kpis["der"], rr.get("der_0"))
+            _style(ws.cell(r, 15), kpis["spk_acc"], rr.get("spk_acc"))
         v = rs.get("verdict", "")
         vk = TARGET if v == "目標達成" else MINIMUM if v == "最低ライン達成" else FAIL if v.startswith("未達") else None
         if vk:
-            ws.cell(r, 17).fill, ws.cell(r, 17).font = ar.KPI_STYLE[vk]
+            ws.cell(r, 18).fill, ws.cell(r, 18).font = ar.KPI_STYLE[vk]
         if c.cfg == TRUTH_CFG:
             for j in (1, 2, 3, 4):
                 ws.cell(r, j).font = Font(italic=True, color="7F7F7F")
     ws.freeze_panes = ws.cell(head + 1, 4)
+    if not_measured:
+        r += 2
+        ws.cell(r, 1, "測れなかった条件（表に行がないもの）").font = ar.SECTION_FONT
+        for t in not_measured:
+            r += 1
+            ws.cell(r, 1, "・" + t)
     r += 2
     ws.cell(r, 1, "読み方").font = ar.SECTION_FONT
     for t in [

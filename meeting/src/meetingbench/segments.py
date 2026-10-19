@@ -8,6 +8,7 @@ from __future__ import annotations
 import csv
 import json
 import time
+from contextlib import contextmanager
 from pathlib import Path
 
 from . import pvt_bridge
@@ -75,13 +76,25 @@ def cut_audio(wav: Path, segments_ms: list[list[int]], out_dir: Path) -> list[di
     return items
 
 
+@contextmanager
+def clamp_torch_threads(n: int):
+    """funasr は モデルを作るたびに torch のスレッド数を ncpu=4 に戻す。他の処理と CPU を取り合う環境では 4 本が空回りして極端に遅くなるので、
+    この with の間だけ torch.set_num_threads の引数を n に固定する（本体のコードは変えない。本番の PC では 4 のままで構わない）。"""
+    import torch
+
+    orig = torch.set_num_threads
+    torch.set_num_threads = lambda _n: orig(n)   # type: ignore[assignment]
+    orig(n)
+    try:
+        yield
+    finally:
+        torch.set_num_threads = orig   # type: ignore[assignment]
+
+
 def transcribe_sensevoice(wav: Path, segments_ms: list[list[int]], work_dir: Path, threads: int = 2) -> tuple[list[dict], dict]:
     """funasr_mlt（本体）で SenseVoiceSmall を CPU で動かす。戻り値: ([{start_ms,end_ms,text,emotion}], meta)。"""
     import shutil
 
-    import torch
-
-    torch.set_num_threads(threads)
     f = pvt_bridge.funasr_module()
     work_dir.mkdir(parents=True, exist_ok=True)
     clips = work_dir / "clips"
@@ -89,11 +102,13 @@ def transcribe_sensevoice(wav: Path, segments_ms: list[list[int]], work_dir: Pat
     lst = work_dir / "cut_audio_list.json"
     lst.write_text(json.dumps(items), encoding="utf-8")
     t0 = time.perf_counter()
-    res, err = f.funasr_mlt(cut_audio_list=str(lst), detect_language="ja", model_name="iic/SenseVoiceSmall",
-                            logs_file=str(work_dir / "funasr.log"), is_cuda=False, hotword="", cache_folder=str(work_dir))
+    with clamp_torch_threads(threads):
+        res, err = f.funasr_mlt(cut_audio_list=str(lst), detect_language="ja", model_name="iic/SenseVoiceSmall",
+                                logs_file=str(work_dir / "funasr.log"), is_cuda=False, hotword="", cache_folder=str(work_dir))
     elapsed = time.perf_counter() - t0
     shutil.rmtree(clips, ignore_errors=True)   # 切り出した wav は不要（ディスクを空ける）
     if res is False:
         raise RuntimeError(f"funasr_mlt が失敗しました: {err}")
     out = [{"start_ms": int(r["start_time"]), "end_ms": int(r["end_time"]), "text": (r.get("text") or "").strip()} for r in res]
-    return out, {"elapsed_sec": elapsed, "segments": len(out), "model": "iic/SenseVoiceSmall (pyVideoTrans funasr_mlt, CPU)"}
+    return out, {"elapsed_sec": elapsed, "segments": len(out), "torch_threads": threads,
+                 "model": "iic/SenseVoiceSmall (pyVideoTrans funasr_mlt, CPU)"}

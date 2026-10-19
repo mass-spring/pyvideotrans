@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import importlib
 import importlib.util
+import os
 import sys
 from pathlib import Path
 from types import ModuleType
@@ -33,33 +34,47 @@ def ensure_pvt_importable() -> Path:
     return REPO_ROOT
 
 
+# 本体は config を import するとき、証明書とプロキシの環境変数を書き換える（_set_env / fix_ssl_cert_env）:
+#   SSL_CERT_FILE・REQUESTS_CA_BUNDLE・CURL_CA_BUNDLE を certifi のものに、no_proxy を自分の一覧に。
+# 会社やクラウドの環境にある独自の証明書（検査つきプロキシ）が使えなくなり、ModelScope などへの通信が失敗するので、
+# import の前後でこれらだけ元に戻す（本体のファイルは変更しない。本体は import 後も GUI/CLI の通常動作ではこの値を使う）。
+_PRESERVE_ENV = ("SSL_CERT_FILE", "REQUESTS_CA_BUNDLE", "CURL_CA_BUNDLE", "no_proxy", "NO_PROXY")
+
+
+def _import(name: str) -> ModuleType:
+    ensure_pvt_importable()
+    saved = {k: os.environ.get(k) for k in _PRESERVE_ENV}
+    try:
+        return importlib.import_module(name)
+    finally:
+        for k, v in saved.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+
+
 def speakers_module() -> ModuleType:
     """videotrans.process._audio_speakers（built_speakers / cam_speakers / _assign_speakers が入っている）。"""
-    ensure_pvt_importable()
-    return importlib.import_module("videotrans.process._audio_speakers")
+    return _import("videotrans.process._audio_speakers")
 
 
 def settings():
-    ensure_pvt_importable()
-    return importlib.import_module("videotrans.configure.config").settings
+    return _import("videotrans.configure.config").settings
 
 
 def vad_module() -> ModuleType:
-    ensure_pvt_importable()
-    return importlib.import_module("videotrans.process.vad")
+    return _import("videotrans.process.vad")
 
 
 def funasr_module() -> ModuleType:
-    ensure_pvt_importable()
-    return importlib.import_module("videotrans.process.stt_funasr")
+    return _import("videotrans.process.stt_funasr")
 
 
 def models_dir() -> Path:
-    ensure_pvt_importable()
-    return Path(importlib.import_module("videotrans.configure.config").ROOT_DIR) / "models"
+    return Path(_import("videotrans.configure.config").ROOT_DIR) / "models"
 
 
 def builtin_model_urls() -> list[str]:
     """内蔵の話者分離（built）が使う onnx の取得先（本体の定数。ModelScope 側）。"""
-    ensure_pvt_importable()
-    return list(importlib.import_module("videotrans.configure.constants").BUILTINT_URL_MS)
+    return list(_import("videotrans.configure.constants").BUILTINT_URL_MS)

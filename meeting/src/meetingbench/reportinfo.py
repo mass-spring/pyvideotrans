@@ -112,6 +112,14 @@ def collect_info(lay: Layout, command: str, manifest: dict, conds: list, extra_n
         t = c.times
         if "total" in t:
             items.append((f"処理時間 {c.name}", f"区間 {t.get('vad', 0):.0f} 秒 + 文字起こし {t.get('asr', 0):.0f} 秒 + 話者分離 {t.get('diar', 0):.0f} 秒 = {t['total']:.0f} 秒（RTF {t['rtf']:.3f}）"))
+    for v in sorted(manifest.get("variants", {})):
+        sf = lay.runs(v) / "sanity_ecapa.json"
+        if sf.is_file():
+            d = json.loads(sf.read_text(encoding="utf-8"))
+            items.append((f"参考: ECAPA で分けた正解率（録音 {v}）",
+                          f"{d['method']}。正解の区間 {d['utterances']} 発言を分けたときの発言単位の正解率 {d['accuracy']:.1%}"
+                          f"（話者 {d['speakers']} × クラスタの混同行列 {d['confusion']}）。素朴なクラスタリングなので、"
+                          "話者分離の本来の性能の上限ではなく、『このデータで話者が自明には分かれない』ことの目安"))
     for n in extra_notes or []:
         items.append(("備考", n))
     return items
@@ -120,3 +128,23 @@ def collect_info(lay: Layout, command: str, manifest: dict, conds: list, extra_n
 def load_manifest(lay: Layout) -> dict:
     p = lay.root / "manifest.json"
     return json.loads(p.read_text(encoding="utf-8")) if p.is_file() else {}
+
+
+def not_measured(conds: list, variants: list[str]) -> list[str]:
+    """測れなかった条件の一覧（まとめシートに載せる）。"""
+    out = [
+        "pyannote（pyVideoTrans の pyannote 経路）: Hugging Face の利用同意とトークンが必要で、この環境にはないため未測定。",
+        "faster-whisper large-v3-turbo による文字起こし（任意項目）: ディスクの空き容量が少ないためモデルを新しく取得せず、未実施（文字起こしは SenseVoiceSmall のみ）。",
+        "ali_CAM（CAM++）: この CPU 環境（pyVideoTrans は CPU 1 スレッド固定）では、150 秒の抜粋の話者分離にも 20 CPU 分以上かかっても終わらず（RTF 8 以上と推定）、"
+        "約32分の録音は実用的な時間で終わらないため未測定。GPU（Colab / EC2）または本番 PC で測る。動かすには hdbscan・kaldiio も必要。モデル（約330MB）は容量のため削除した"
+        "（`python -m meetingbench models --only cam` で再取得）。",
+    ]
+    have = {(c.variant, c.cfg, c.n) for c in conds}
+    names = {"built-ja": "built（言語=ja）", "built-zh": "built（言語=zh）"}
+    nn = {"n4": "4人と指定", "auto": "自動"}
+    for v in variants:
+        for cfg in names:
+            for n in nn:
+                if (v, cfg, n) not in have:
+                    out.append(f"録音{v} / {names[cfg]} / 人数{nn[n]}: 時間の都合で未実施（言語=zh は RTF 約2 で1回約1時間かかる）。")
+    return out

@@ -44,6 +44,22 @@ def cmd_run(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_sanity(args: argparse.Namespace) -> int:
+    import json
+
+    from . import pipeline as pl
+    from .sanity import ecapa_check
+
+    lay = pl.Layout(args.data)
+    for v in args.variant:
+        res = ecapa_check(lay.wav(v), lay.ref(v), k=args.k)
+        out = lay.runs(v) / "sanity_ecapa.json"
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(json.dumps(res, ensure_ascii=False, indent=1), encoding="utf-8")
+        say(f"[{v}] ECAPA で正解の発言をクラスタリング（人数 {args.k}）: 発言単位の正解率 {res['accuracy']:.1%}")
+    return 0
+
+
 def cmd_models(args: argparse.Namespace) -> int:
     from . import model_fetch as mf
 
@@ -73,7 +89,8 @@ def cmd_report(args: argparse.Namespace) -> int:
     info = reportinfo.collect_info(lay, cmd, manifest, conds)
     names = {c.name for c in conds}
     detail = [n for v in variants for n in (f"{v}:silero/built-ja/n4", f"{v}:oracle/built-ja/n4", f"{v}:silero/cam/n4") if n in names]
-    out = excel.write_workbook(args.out, conds, segrows, info, excel.best_lines(conds, scoring.DEFAULT_KPIS), recs, detail_for=detail)
+    out = excel.write_workbook(args.out, conds, segrows, info, excel.best_lines(conds, scoring.DEFAULT_KPIS), recs, detail_for=detail,
+                               not_measured=reportinfo.not_measured(conds, variants))
     say(f"完了: {Path(out).resolve()}")
     return 0
 
@@ -110,6 +127,12 @@ def build_parser() -> argparse.ArgumentParser:
     m = sub.add_parser("models", help="必要なモデルを取得する（あれば飛ばす。合計 約1.4GB。TLS は検証する）")
     m.add_argument("--only", nargs="+", choices=["cam", "sensevoice", "fsmn_vad"], help="ModelScope のモデルのうち取得するもの（built 用 onnx は常に確認）")
     m.set_defaults(func=cmd_models)
+
+    y = sub.add_parser("sanity", help="参考値: 正解の発言を ECAPA 埋め込み＋素朴なクラスタリングで分けた正解率（voicecheck の環境で実行: uv run）")
+    y.add_argument("--data", default="data/testdata/pseudo_meeting")
+    y.add_argument("--variant", nargs="+", default=["A", "B"], choices=["A", "B"])
+    y.add_argument("-k", type=int, default=4, help="クラスタの数（人数）")
+    y.set_defaults(func=cmd_sanity)
 
     q = sub.add_parser("report", help="採点して Excel（まとめ・全指標・区間の診断・話者混同・発言別・実行情報）を作る")
     q.add_argument("--data", default="data/testdata/pseudo_meeting")

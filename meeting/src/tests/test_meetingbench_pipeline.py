@@ -155,3 +155,34 @@ def scoring_audio(lay, v):
     import soundfile as sf
 
     return sf.info(str(lay.wav(v))).duration
+
+
+def test_cluster_accuracy_and_ecapa_check_with_fake_embedder(tmp_path):
+    import numpy as np
+    import soundfile as sf
+    from meetingbench import sanity
+
+    rng = np.random.default_rng(0)
+    centers = {"A": np.array([1.0, 0, 0, 0]), "B": np.array([0, 1.0, 0, 0]), "C": np.array([0, 0, 1.0, 0])}
+    labels = ["A", "B", "C"] * 6
+    X = np.array([centers[s] + 0.05 * rng.standard_normal(4) for s in labels])
+    acc, m, spk = sanity.cluster_accuracy(X, labels, 3)
+    assert acc == 1.0 and spk == ["A", "B", "C"] and m.sum() == 18
+    X2 = X.copy()
+    X2[labels.index("B")] = centers["A"]                      # 1つだけ別の人の声になっていれば 17/18
+    assert sanity.cluster_accuracy(X2, labels, 3)[0] == pytest.approx(17 / 18)
+
+    sr = 16000
+    sf.write(tmp_path / "m.wav", np.zeros(sr * 20, np.float32), sr)
+    (tmp_path / "ref.csv").write_text("start,end,speaker,text\n0,2,A,あ\n3,5,B,い\n6,8,A,う\n9,11,B,え\n", encoding="utf-8")
+
+    class Fake:   # 区間の長さではなく呼ばれた順番で話者らしい埋め込みを返す
+        def __init__(self):
+            self.n = 0
+
+        def embed(self, y):
+            self.n += 1
+            return centers["A"] if self.n in (1, 3) else centers["B"]
+
+    r = sanity.ecapa_check(tmp_path / "m.wav", tmp_path / "ref.csv", k=2, embedder=Fake())
+    assert r["accuracy"] == 1.0 and r["utterances"] == 4 and r["speakers"] == ["A", "B"]
