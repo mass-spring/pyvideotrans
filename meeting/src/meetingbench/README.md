@@ -112,7 +112,19 @@ PYTHONPATH=src ~/.venvs/pvt-diar/bin/python -m meetingbench report --out outputs
 - 「区間の診断」：字幕に複数の話者が混ざった割合など。話者正解率が上がらない理由の切り分けに
 - 「実行情報」：モデルとバージョン、ライセンス、JVNV の出典（CC BY-SA 4.0 の表記）、処理時間、本体を変更していない確認
 
-## 5. 開発者向けメモ
+## 5. つまずきやすい点（この環境で実際に起きたこと）
+
+- **文字起こしが極端に遅い**：funasr（SenseVoice）はモデルを作るたびに torch のスレッド数を 4 に戻します。他の処理と CPU を取り合う PC では 4 本が空回りして、
+  8 発言（68 秒）に約9分かかりました。`run --stage asr` は `--threads`（既定 2）で固定してあり、同じ量が約20秒で終わります（本体のファイルは変えていません）。
+- **ModelScope から取得できない（証明書エラー）**：本体は `import` するときに証明書の環境変数（SSL_CERT_FILE など）を certifi のものに書き換えます。
+  検査つきプロキシのある環境では通信が失敗するので、`pvt_bridge.py` が import の前後でこれらを元に戻しています。
+- **ali_CAM が終わらない**：CPU では（pyVideoTrans は CPU 1 スレッド固定）150 秒の抜粋でも 20 CPU 分以上かかり、約32分の録音は実用になりませんでした。
+  GPU または Mac で測ってください。動かすには `hdbscan`・`kaldiio` が要ります。
+- **built の言語=zh は遅い**：ERes2Net large を使うため、同じ録音で `ja` の約4〜7倍かかります（この環境で1回40〜60分）。`--backend built-ja` だけにすると約10分です。
+- **ディスク**：モデル約1.4GB＋環境約2GB＋疑似会議約120MB。`pytest` の全体実行は一時ファイルを約800MB作るので、空きが少ないときは
+  `uv run pytest -q -o tmp_path_retention_policy=failed -o tmp_path_retention_count=0` で実行すると、成功したテストの一時ファイルをすぐ消します。
+
+## 6. 開発者向けメモ
 
 - テスト：`cd meeting && uv run pytest -q src/tests/test_meetingbench_*.py`（モデルのダウンロードなし。合成音声と偽の認識結果で、本体の `_assign_speakers` だけ実物を使う）。
 - 構成：`jvnv.py`（索引）、`build.py`（疑似会議）、`pvt_bridge.py`（本体の関数を import。PySide6 が無い環境では空の部品に差し替え）、`model_fetch.py`、`segments.py`（区間・SenseVoice）、`diarize.py`（本体の話者分離を呼ぶ）、`pipeline.py`（段階）、`scoring.py`（asrcheck で採点）、`excel.py`、`reportinfo.py`。

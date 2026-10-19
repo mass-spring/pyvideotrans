@@ -103,8 +103,9 @@ def collect_info(lay: Layout, command: str, manifest: dict, conds: list, extra_n
          "silero VAD: MIT。pyVideoTrans 本体: GPL-3.0（社外へ配布する場合は改造部分も含めソース公開が必要）。"),
         ("ライブラリのバージョン", pkg_versions()),
         ("Python / OS / CPU", f"Python {platform.python_version()} / {platform.platform()} / {cpu_model()} / {os.cpu_count()} コア（GPU なし）"),
-        ("計測時の注意", "同じ機械で TTS の生成など別のジョブが動いており、CPU を取り合った状態で測った（load average 約 8〜11 / 4 コア）。処理時間・RTF は参考値で、KPI の基準機（Mac）とは別。"
-                    "話者分離の呼び出しは本体どおり CPU 1 スレッド。文字起こしは torch のスレッド数 1。"),
+        ("計測時の注意", "同じ機械で TTS の生成など別のジョブが動いており、CPU を取り合った状態で測った（load average は約 4〜11 / 4 コア）。処理時間・RTF は参考値で、KPI の基準機（Mac）とは別。"
+                    "話者分離の呼び出しは本体どおり CPU 1 スレッド（本体が OMP_NUM_THREADS=1 にする）。文字起こしは torch を 2 スレッドに固定して実行した"
+                    "（funasr はモデルを作るたびに torch のスレッド数を 4 に戻す。他の処理と取り合う環境では 4 本が空回りして 30 倍近く遅くなったため、この測定だけ固定。本番の PC では 4 のままで構わない）。"),
     ]
     for c in conds:
         if c.cfg == "truth":

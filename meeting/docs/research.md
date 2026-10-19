@@ -736,3 +736,37 @@ E4 の実装時の調査（サブエージェント sonnet）。**太字は公�
 - funasr は `AutoModel` に `ncpu` を渡さないと torch のスレッド数を4に上書きし、他の処理と同時だと極端に遅くなる（1件30秒以上）。pyVideoTrans 側も同じ影響を受けるかは (要検証)。
 
 出典：[JVNV コーパス](https://sites.google.com/site/shinnosuketakamichi/research-topics/jvnv_corpus) / [非言語音声を除いた版（HF）](https://huggingface.co/datasets/litagin/jvnv_corpus_v1_no_nv) / [SenseVoice](https://github.com/FunAudioLLM/SenseVoice) / [FunASR](https://github.com/modelscope/FunASR) / [faster-whisper](https://github.com/SYSTRAN/faster-whisper)
+
+---
+
+## 22. 疑似会議での話者分離の現状値（meetingbench・JVNV）（2026-10-19 追記）
+
+`meeting/src/meetingbench` を作成し（サブエージェント sonnet、まとめの数字と「日本語のときは英語用の埋め込みになる」点は opus がコードと Excel で再確認）、JVNV の4人（F1・F2・M1・M2）が交代で話す疑似会議を作って測った。結果は `meeting/outputs/pseudo_meeting_asr.xlsx`（Git 対象外）。
+
+- 疑似会議：A＝重なりなし 32.5分、B＝約12.5%（34発言）が0.3〜1.0秒重なる 31.8分。どちらも275発言・16kHz。乱数の種を固定（同じものを再作成できる）。
+- 正解の区間・文字は台本から機械的に作成（人の聞き取り確認なし）。スタジオの朗読なので、実際の会議より「やさしい」条件。
+
+| 条件（主なもの） | 話者正解率（発言単位） | DER（collar 0） | CER |
+|---|---|---|---|
+| A・既定の区切り（silero）・built（言語 ja）・4人と指定 | 50.2% | 58.5% | 3.4% |
+| A・同上・built（言語 zh の埋め込み）・4人と指定 | 66.5% | 42.5% | 3.4% |
+| A・同上・人数は自動 | 約14.5% | 約88% | 3.4% |
+| A・区切りはそのまま、話者だけ正解にした上限 | 95.3% | 18.1% | 3.4% |
+| B・既定の区切り・built（言語 ja）・4人と指定 | 26.9% | 76.6% | 4.6% |
+| B・同上・built（言語 zh の埋め込み）・4人と指定 | 65.8% | 43.4% | 4.6% |
+| B・話者だけ正解にした上限 | 90.9% | 22.5% | 4.6% |
+
+- **pyVideoTrans 内蔵の話者分離 `built` は KPI（話者正解率90%・DER 20%）に遠い**。最高でも話者正解率 70.5%、DER 29.8%。
+- **原因の1つを特定：`built` は言語が zh 以外だと英語用の埋め込み（NeMo titanet small）を使う**（`videotrans/process/_audio_speakers.py` 253行）。日本語でも英語用になる。中国語用（3D-Speaker ERes2Net large）を使うと 50%→68% に上がる（試験として関数に直接 zh を渡した結果。本体の設定は変えていない）。
+- 人数「自動」は使えない（4人を93〜113人に分ける）。4人と指定しても3人になることが多い。重なりにも弱い（ja で 50%→27%）。
+- 既定の区切り（silero VAD）自体は悪くない（話者さえ正しければ A で 95.3%）。**弱いのは「誰の声か」の割り当て**。
+- 参考：正解の区間を ECAPA の埋め込みで素朴に4つに分けても 75%（男声の M1 と M2 が混ざる）。このデータは感情の幅が大きく、分けにくい。
+- 測れなかったもの：`ali_CAM`（CPU では150秒の抜粋でも20分以上かかり未完）、pyannote community-1（Hugging Face のトークンが必要）。**次の本命は pyannote community-1**（PLAN 4.1の第一候補）。
+- **文字起こし（SenseVoiceSmall）の CER は 2.8〜4.7%**（KPI の最低ライン15%・目標8%を満たす。ただし朗読）。
+- 実装中に見つけた pyVideoTrans 本体の注意点（本体は変更していない）：
+  - **モデルのダウンロード（`videotrans/util/help_down.py`）が TLS の証明書検証を切っている**（`verify=False`、238・321行）。途中で偽のモデルにすり替えられる危険があるため、meetingbench は検証ありで同じファイルを取得した。本体の修正を検討（リスクに追加）。
+  - 設定の読み込み時に証明書の環境変数を certifi のものに書き換える（`videotrans/configure/_paths.py`）。会社のプロキシ環境ではモデル取得が失敗しうる。
+  - funasr はモデルを作るたびに torch のスレッド数を4に戻す（他の処理と同時だと約30倍遅くなった）。
+- (要検証)：内蔵 onnx 3点（再配布元 himyworld/videotrans）の元モデルのライセンス（NeMo titanet small、3D-Speaker ERes2Net）。
+
+出典：[JVNV](https://sites.google.com/site/shinnosuketakamichi/research-topics/jvnv_corpus)（arXiv:2310.06072） / [sherpa-onnx speaker diarization](https://k2-fsa.github.io/sherpa/onnx/speaker-diarization/index.html) / [3D-Speaker](https://github.com/modelscope/3D-Speaker) / [pyannote community-1](https://huggingface.co/pyannote/speaker-diarization-community-1)

@@ -72,10 +72,15 @@ def best_lines(conds: list[Cond], kpis: dict[str, Kpi]) -> list[str]:
         cs = [c for c in conds if c.variant == v and c.cfg != TRUTH_CFG]
         if not cs:
             continue
-        b = min((c for c in cs if c.row_raw and c.row_raw.get("der") is not None), key=lambda c: c.row_raw["der"], default=None)
-        if b:
-            out.append(f"録音{v}: 話者分離モデルの生出力の DER（collar 0）が最小だった条件は {b.seg}/{b.cfg}/{b.n} の {b.row_raw['der']:.1%}"
-                       f"（KPI 最低ライン {kpis['der'].fmt(kpis['der'].minimum)} 以下）。")
+        raw = {}
+        for c in sorted(cs, key=sort_key):
+            if c.row_raw and c.row_raw.get("der_0") is not None:
+                raw.setdefault((c.cfg, c.n), c.row_raw["der_0"])    # 生出力は区間の切り方に依らないので1条件につき1つ
+        if raw:
+            out.append(f"録音{v}: 話者分離モデルの生出力の DER（collar 0）— "
+                       + "、".join(f"{CFG_SHORT.get(cfg, cfg)} " + " / ".join(f"{N_JA.get(n, n)} {x:.1%}" for (c2, n), x in raw.items() if c2 == cfg)
+                                  for cfg in dict.fromkeys(k[0] for k in raw))
+                       + f"（KPI 最低ライン {kpis['der'].fmt(kpis['der'].minimum)} 以下）。")
         b = max((c for c in cs if c.row_sub.get("spk_acc") is not None), key=lambda c: c.row_sub["spk_acc"], default=None)
         if b:
             out.append(f"録音{v}: 話者正解率（字幕単位）が最高だった条件は {b.seg}/{b.cfg}/{b.n} の {b.row_sub['spk_acc']:.1%}"
